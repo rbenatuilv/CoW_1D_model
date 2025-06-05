@@ -1,0 +1,47 @@
+{
+    "bif_1": {
+        "branches": ["BAS", "L-PCA_I", "R-PCA_I"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 0.7748, 0.7771]
+    },
+    "bif_2": {
+        "branches": ["L-PCA_I", "L-PCA_II", "L-PCommA"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 0.7054, 0.9872]
+    },
+    "bif_3": {
+        "branches": ["L-ICA_I", "L-PCommA", "L-ICA_II"],
+        "positions": ["left", "right", "left"],
+        "angles": ["None", 1.2182, 0.5778]
+    },
+    "bif_4": {
+        "branches": ["L-ICA_II", "L-ACA_I", "L-MCA"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 1.9317, 0.1917]
+    },
+    "bif_5": {
+        "branches": ["L-ACA_I", "ACA", "L-ACA_II"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 2.4837, 0.2554]
+    },
+    "bif_6": {
+        "branches": ["R-PCA_I", "R-PCA_II", "R-PCommA"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 0.8728, 1.1379]
+    },
+    "bif_7": {
+        "branches": ["R-ICA_I", "R-ICA_II", "R-PCommA"],
+        "positions": ["left", "left", "right"],
+        "angles": ["None", 0.6948, 1.3204]
+    },
+    "bif_8": {
+        "branches": ["R-ICA_II", "R-ACA_I", "R-MCA"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 1.0024, 0.9820]
+    },
+    "bif_9": {
+        "branches": ["R-ACA_I", "ACA", "R-ACA_II"],
+        "positions": ["right", "right", "left"],
+        "angles": ["None", 0.8910, 0.9184]
+    }
+}

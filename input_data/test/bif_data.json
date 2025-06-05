@@ -1,0 +1,7 @@
+{
+    "bif_1": {
+        "branches": ["0", "1", "2"],
+        "positions": ["right", "left", "left"],
+        "angles": ["None", 0.7748, 0.7771]
+    }
+}
