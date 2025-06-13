@@ -6,6 +6,12 @@ from typing import Literal
 
 
 class VascularDataLoader:
+    """
+    A class to load vascular data for the simulation.
+    It loads vessel data, bifurcation data, and inflow data from specified paths.
+    The paths can be specified or default paths will be used based on the mode.
+    """
+
     def __init__(
         self,
         mode: Literal["main", "test"] = "main",
@@ -36,7 +42,16 @@ class VascularDataLoader:
         self.bif_data_path = bif_data_path
         self.inflows_dir_path = inflows_dir_path
 
-    def load(self):
+    def load(self) -> tuple[dict, dict, dict]:
+        """
+        Load the vessel data, bifurcation data, and inflow data from the specified paths.
+        Returns:
+            tuple: A tuple containing:
+                - vessels_data (dict): Vessel data loaded from JSON.
+                - bif_data (dict): Bifurcation data loaded from JSON.
+                - inflows (dict): A dictionary mapping vessel IDs to their inflow functions.
+        """
+
         with open(self.vessel_data_path, 'r') as f:
             vessels_data = json.load(f)
 
@@ -59,7 +74,3 @@ class VascularDataLoader:
             inflows[vessel_id] = lambda t, v=velocity, p=period: v(np.mod(t, p))
 
         return vessels_data, bif_data, inflows
-
-
-
-    

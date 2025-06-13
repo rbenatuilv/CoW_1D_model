@@ -15,17 +15,41 @@ rank = comm.Get_rank()
 
 
 class VascularSolver:
+    """
+    A class to solve a vascular system of blood vessels using finite element methods.
+    This class handles the setup, solving of the interior problems, and the
+    boundary conditions for the vessels in the system. It also manages bifurcations
+    and branches in the vascular network.
+    It is designed to be used in a parallel computing environment with MPI (work in progress).
+    Attributes:
+        h (float): The time step size.
+        dt (float): The time increment for the simulation.
+        system (VesselSystem): The vascular system to be solved.
+    """
+    
     def __init__(self, h: float, dt: float):
         self.h = h
         self.dt = dt
         self.system = None
 
     def set_system(self, system: VesselSystem):
+        """
+        Set the vascular system to be solved.
+        Args:
+            system (VesselSystem): The vascular system to be solved.
+        """
+
         self.system = system
         self.system.setup(h=self.h, dt=self.dt)
 
     @profile_this
     def solve_interior(self, vessel: BloodVessel, store_solution: bool = True):
+        """
+        Solve the interior problem for a single blood vessel.
+        Args:
+            vessel (BloodVessel): The blood vessel to be solved.
+            store_solution (bool): Whether to store the solution in the vessel's solution history.
+        """
         
         with vessel.rhs.localForm() as loc_b:
             loc_b.set(0)
@@ -47,6 +71,13 @@ class VascularSolver:
 
     @profile_this
     def solve_inflow_BC(self, vessel: BloodVessel, t: float):
+        """
+        Solve the inflow boundary condition for a single blood vessel.
+        Args:
+            vessel (BloodVessel): The blood vessel to be solved.
+            t (float): The current time in the simulation.
+        """
+
         if "inflow" not in [vessel.LB_type, vessel.RB_type]:
             return
         
@@ -80,6 +111,12 @@ class VascularSolver:
 
     @profile_this
     def solve_outflow_BC(self, vessel: BloodVessel):
+        """
+        Solve the outflow boundary condition for a single blood vessel.
+        Args:
+            vessel (BloodVessel): The blood vessel to be solved.
+        """
+
         if "outflow" not in [vessel.LB_type, vessel.RB_type]:
             return
         
@@ -100,6 +137,18 @@ class VascularSolver:
 
 
     def create_newton(self, bifurcation: dict, gamma: float = 2.0):
+        """
+        Create the Newton system for a bifurcation.
+        Args:
+            bifurcation (dict): A dictionary containing the bifurcation data.
+            gamma (float): The exponent for the branch function.
+        Returns:
+            N (callable): The function representing the system of equations.
+            J (callable): The Jacobian of the system.
+            U0 (np.ndarray): Initial guess for the solution.
+        """
+
+
         v1, v2, v3 = [self.system.vessels[vessel_id] 
                       for vessel_id in bifurcation["branches"]]
 
@@ -188,10 +237,14 @@ class VascularSolver:
     @staticmethod
     def branch_conv_criterion(u0, u_prev, u_curr, tol):
         """
-        u0     : initial state (shape [6])
-        u_prev : previous state (shape [6])
-        u_curr : current state   (shape [6])
-        tol    : tolerance for convergence criterion
+        Check convergence criterion for the branch solution.
+        This function checks if the relative change in area and flux
+        between the previous and current states is below a specified tolerance.
+        Args:
+            u0     : initial state (shape [6])
+            u_prev : previous state (shape [6])
+            u_curr : current state   (shape [6])
+            tol    : tolerance for convergence criterion
         """
         # Separate area and flux components
         A0, Q0 = u0[::2], u0[1::2]
@@ -208,6 +261,14 @@ class VascularSolver:
 
     @profile_this
     def solve_branches(self, tol: float = 1e-5, max_iter: int = 100, gamma: float = 2.0):
+        """
+        Solve the branches of the vascular system using a Newton method.
+        Args:
+            tol (float): Tolerance for convergence.
+            max_iter (int): Maximum number of iterations for the Newton method.
+            gamma (float): Parameter for the branch function.
+        """
+
         for bid in self.system.bifurcations:
             bif = self.system.bifurcations[bid]
             
@@ -269,8 +330,10 @@ class VascularSolver:
 
     def solve(self, T: float, gamma_bif: float = 2.0):
         """
-        Time-march for t from 0 → T, in steps of self.dt. Only `solve_interior`
-        is MPI-parallel; all boundary logic happens on rank 0 and then is Bcast.
+        Solve the vascular system over a time period T.
+        Args:
+            T (float): Total time to solve the system for.
+            gamma_bif (float): Parameter for the bifurcation branch function.
         """
         n_steps = int(T / self.dt)
 
@@ -322,6 +385,12 @@ class VascularSolver:
         comm.Barrier()
 
     def create_results_directory(self, mode: Literal["main", "test"] = "main"):
+        """
+        Create the results directory structure for storing plots and data.
+        Args:
+            mode (str): The mode of operation, either "main" or "test".
+        """
+
         path = os.path.join("results")
         if not os.path.exists(path):
             os.mkdir(path)
@@ -346,6 +415,13 @@ class VascularSolver:
             os.mkdir(data_path)
 
     def plot_solutions(self, T: float, mode: Literal["main", "test"] = "main"):
+        """
+        Plot the solutions of the vascular system for each vessel.
+        Args:
+            T (float): Total time to plot the solutions for.
+            mode (str): The mode of operation, either "main" or "test".
+        """
+
         if rank != 0:
             return
 
@@ -365,6 +441,12 @@ class VascularSolver:
         print(f"Plots saved to {path}")
 
     def save_solutions(self, mode: Literal["main", "test"] = "main"):
+        """
+        Save the solutions of the vascular system for each vessel.
+        Args:
+            mode (str): The mode of operation, either "main" or "test".
+        """
+
         if rank != 0:
             return
 

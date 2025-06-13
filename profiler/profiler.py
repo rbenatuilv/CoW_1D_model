@@ -11,6 +11,11 @@ rank = comm.Get_rank()
 ENABLE_PROFILING = True
 
 def profile_this(func):
+    """
+    Decorator to profile a function using cProfile.
+    If profiling is disabled, the function runs normally without profiling.
+    """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         if not ENABLE_PROFILING:
@@ -26,6 +31,11 @@ def profile_this(func):
     return wrapper
 
 def print_profiled_summary(limit=10):
+    """
+    Print a summary of the profiled functions.
+    This function aggregates profiling data across all ranks and prints it only from rank 0.
+    """
+
     if rank != 0 or not ENABLE_PROFILING:
         return
     print("\n=== Profiling Summary ===")
