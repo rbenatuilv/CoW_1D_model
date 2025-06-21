@@ -126,14 +126,32 @@ class VascularSolver:
         sol = np.column_stack((vessel_A, vessel_Q)).reshape((len(vessel_A), 2))
 
         if vessel.LB_type == "outflow":
+            # uL = sol[0]
+            # du_dz_L = vessel.dU_dz()[0]
+            # vessel.LB = vessel.W0(uL) @ vessel.Y0(uL, du_dz_L, self.dt)
+
             uL = sol[0]
             du_dz_L = vessel.dU_dz()[0]
-            vessel.LB = vessel.W0(uL) @ vessel.Y0(uL, du_dz_L, self.dt)
+
+            A = vessel.A0
+            i2 = vessel.I2(uL)
+            q = (i2 @ vessel.CC(uL, du_dz_L, self.dt) - i2[0] * A) / (i2[1] + 1e-12)
+
+            vessel.LB = np.array([A, q], dtype=default_scalar_type)
 
         if vessel.RB_type == "outflow":
+            # uR = sol[-1]
+            # du_dz_R = vessel.dU_dz()[-1]
+            # vessel.RB = vessel.WL(uR) @ vessel.YL(uR, du_dz_R, self.dt)
+
             uR = sol[-1]
             du_dz_R = vessel.dU_dz()[-1]
-            vessel.RB = vessel.WL(uR) @ vessel.YL(uR, du_dz_R, self.dt)
+            
+            A = vessel.A0
+            i1 = vessel.I1(uR)
+            q = (i1 @ vessel.CC(uR, du_dz_R, self.dt) - i1[0] * A) / (i1[1] + 1e-12)
+
+            vessel.RB = np.array([A, q], dtype=default_scalar_type)
 
 
     def create_newton(self, bifurcation: dict, gamma: float = 2.0):
