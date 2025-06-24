@@ -441,14 +441,14 @@ class BloodVessel:
         assert U.shape == (2, )
         a, q = U
 
-        return self.beta * ((np.sqrt(a) - self.A0 ** 0.5) / self.A0) + 0.5 * (q / a) ** 2
+        return self.beta * ((np.sqrt(a) - self.A0 ** 0.5) / self.A0) + 0.5 * self.blood.rho * (q / a) ** 2
     
     def dP_dU(self, U: np.ndarray):
         assert U.shape == (2, )
         a, q = U
 
-        dP_da = self.beta / (2 * self.A0 * np.sqrt(a)) - (q ** 2) / (a ** 3)
-        dP_dq = q / a ** 2
+        dP_da = self.beta / (2 * self.A0 * np.sqrt(a)) - self.blood.rho * (q ** 2) / (a ** 3)
+        dP_dq = self.blood.rho * q / a ** 2
 
         return np.array([dP_da, dP_dq])
 
