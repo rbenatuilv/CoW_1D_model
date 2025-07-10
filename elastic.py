@@ -1,111 +1,40 @@
+from vesselV2 import Vessel
+
 from mpi4py import MPI
-from dolfinx import fem, mesh, default_scalar_type
+from dolfinx import fem, default_scalar_type
 from dolfinx.fem import petsc
 import ufl
 from basix.ufl import element
 from petsc4py import PETSc
 
 import numpy as np
-from typing import Literal
-import matplotlib.pyplot as plt
-import os
 
 
-class Blood:
+class ElasticVessel(Vessel):
     """
-    Class to save blood properties.
-    Properties:
-    DYNAMIC_VISCOSITY: 0.045 Poise (g/(cm.s))
-    DENSITY: 1.050 g/cm^3
-    These values are taken from the literature and are typical for human blood.
+    Class representing an elastic vessel.
+    Inherits from the Vessel class.
     """
-
-    DYNAMIC_VISCOSITY = 0.045  # Poise (g/(cm.s))
-    DENSITY = 1.050  # g/cm^3
-
-    @property
-    def mu(self):
-        return self.DYNAMIC_VISCOSITY
-    
-    @property
-    def rho(self):
-        return self.DENSITY
-
-
-class BloodVessel:
-    """
-    Class that simulates a 1D blood vessel.
-    """
-
-    GAMMA_PROFILE = 2
-    POISSON_RATIO = 0.5 # Assuming incompressible material
-
-    blood = Blood()
-
     def __init__(
-        self, id: int, longitude: float, initial_area: float, 
-        beta_coeff: float,
-        left_bound: Literal["branch", "inflow", "outflow"] = "inflow",
-        right_bound: Literal["branch", "inflow", "outflow"] = "outflow"
+        self, *args, **kwargs
     ):
-        
-        self.id = id
+        """
+        Initialize the elastic vessel with its properties.
+        Calls the parent class constructor.
+        """
+        super().__init__(*args, **kwargs)
 
-        self.long = longitude
-        self.A0 = initial_area 
+        # Vessel boundary values
+        self.LB = np.array([self.A0, 0], dtype=default_scalar_type)
+        self.RB = np.array([self.A0, 0], dtype=default_scalar_type)
 
-        self.alpha = (self.GAMMA_PROFILE + 2) / (self.GAMMA_PROFILE + 1)
-        # self.beta = np.sqrt(np.pi) * young_mod * wall_thick / (1 - self.POISSON_RATIO ** 2)
-        self.beta = beta_coeff
-
-
-        self.Kr = 2 * (self.GAMMA_PROFILE + 2) * np.pi * self.blood.mu / self.blood.rho
-
-        self.LB_type = left_bound
-        self.RB_type = right_bound
-
-        self.bcs = []
-
-        self.dofs_L = None
-        self.dofs_R = None
-
-        self.V = None
-        self.n_dofs = 0
-
-        self.u_n = None  # Initial condition
-        self.u = None
-
-        self.bilinear = None
-        self.linear = None
-        self.A = None
-        self.rhs = None
-        self.solver = None
-
-        self.mesh = None
-
-        self.middlepoints = {
-            "area": [],
-            "flux": []
-        }
-
-        self.solutions = {
-            "area": [],
-            "flux": []
-        }
-
-        self.last_solution = {
-            "area": None,
-            "flux": None
-        }
-
-    def create_mesh(self, h: float):
-        """Create a 1D mesh for the blood vessel."""
-
-        N = int(self.long / h)
-        self.mesh = mesh.create_interval(MPI.COMM_WORLD, N, (0, self.long))
 
     def create_fem_space(self, element_type: str = "Lagrange"):
-        """Create a finite element function space for the blood vessel."""
+        """
+        Create a finite element function space for the elastic vessel.
+        Parameters:
+        element_type (str): Type of finite element to use (default is "Lagrange").
+        """
 
         if self.mesh is None:
             raise ValueError("Mesh not created. Call create_mesh() first.")
@@ -113,42 +42,12 @@ class BloodVessel:
         elem = element(element_type, self.mesh.topology.cell_name(), 1, shape=(2, ))
         self.V = fem.functionspace(self.mesh, elem)
 
-        self.n_dofs = self.V.dofmap.index_map.size_global
-
-    def set_boundary_dofs(self):
-        """Set the degrees of freedom for the left and right boundaries."""
-
-        if self.V is None:
-            raise ValueError("Function space not set. Call create_fem_space() first.")
-
-        self.dofs_L = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], 0.0))
-        self.dofs_R = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], self.long))
-
-    def set_boundary_conditions(self):
+    def add_solution(self, u: fem.Function, save_all: bool = False):
         """
-        Set the boundary conditions for the left and right boundaries.
-        """
-
-        assert self.V is not None, "Function space not set. Call set_fem_space() first."
-
-        bc_L = fem.dirichletbc(self.LB, self.dofs_L, self.V)
-        bc_R = fem.dirichletbc(self.RB, self.dofs_R, self.V)
-        self.bcs = [bc_L, bc_R]
-
-    def set_initial_conditions(self):
-        """Set the initial conditions for the blood vessel."""
-
-        assert self.V is not None, "Function space not set. Call create_fem_space() first."
-
-        self.u_n = fem.Function(self.V)
-        self.u_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
-
-        self.add_solution(self.u_n)
-
-    def add_solution(self, u: fem.Function, save_all: bool = True):
-        """
-        Add a solution to the vessel. `save_all` determines if all solutions are saved
-        to the solutions dictionary or only the last one.
+        Add a solution to the elastic vessel.
+        Parameters:
+        u (fem.Function): The solution function to be added.
+        save_all (bool): Whether to save all solutions or just the last one.
         """
 
         assert u.ufl_shape == (2, ), "Solution must be a vector of size 2."
@@ -179,14 +78,12 @@ class BloodVessel:
             self.middlepoints["area"].append(global_sol[len(global_sol) // 2, 0])
             self.middlepoints["flux"].append(global_sol[len(global_sol) // 2, 1])
 
-
     def set_variational_problem(self, dt: float):
         """
-        Set up the variational problem for the blood vessel.
-        This method creates the bilinear and linear forms, assembles the matrix and vector,
-        and sets up the solver.
+        Set the variational problem for the elastic vessel.
+        Parameters:
+        dt (float): Time step size for the simulation.
         """
-
         assert self.V is not None, "Function space not set. Call create_fem_space() first."
         assert self.bcs, "Boundary conditions not set. Call set_boundary_conditions() first."
 
@@ -215,64 +112,6 @@ class BloodVessel:
 
         self.u = fem.Function(self.V)
         self.u.x.array[:] = self.u_n.x.array
-
-    def initial_setup(self, h: float, dt: float):
-        """
-        Initial setup for the blood vessel.
-        This method creates the mesh, sets up the finite element space, boundary conditions,
-        initial conditions, and the variational problem.
-        """
-
-        self.create_mesh(h)
-        self.create_fem_space()
-        self.set_boundary_dofs()
-        self.set_boundary_conditions()
-        self.set_initial_conditions()
-        self.set_variational_problem(dt)
-
-    def save_middlepoint_plot(self, T: float, quantity: Literal["area", "flux"], filename: str):
-        """
-        Save a plot of the middle point solution for the specified quantity (area or flux).
-        Args:
-            T (float): Total time for the simulation.
-            quantity (str): The quantity to plot ("area" or "flux").
-            filename (str): The filename to save the plot.
-        """
-
-        assert quantity in self.solutions, f"Invalid quantity: {quantity}. Available: {list(self.solutions.keys())}"
-
-        data = self.middlepoints[quantity]
-        if not data:
-            raise ValueError(f"No solutions available for {quantity}.")
-
-        unit = "cm^2" if quantity == "area" else "cm^3/s"
-
-        middle_point_sol = np.array(data)
-        x_values = np.linspace(0, T, len(middle_point_sol))
-        plt.figure(figsize=(10, 6))
-        plt.plot(x_values, middle_point_sol, color='blue', label=f'Middle Point {quantity.capitalize()}')
-        plt.xlabel('Time (s)')
-        plt.ylabel(f'{quantity.capitalize()} ({unit})')
-        plt.title(f'Middle point {quantity.capitalize()} over time for Vessel {self.id}')
-        plt.grid()
-        plt.legend()
-        plt.savefig(filename, dpi=300)
-
-    def save_solution(self, dirname: str):
-        """
-        Save the solutions of the vessel to a file.
-        Args:
-            dirname (str): Directory where the solutions will be saved.
-        """
-
-        if not os.path.exists(dirname):
-            os.makedirs(dirname)
-
-        filename = os.path.join(dirname, f"vessel_{self.id}_solutions.npz")
-
-        # Save a pkl file with the solutions
-        with open(filename, 'wb') as f:
-            np.savez(f, area=np.array(self.solutions["area"]), flux=np.array(self.solutions["flux"]))
 
 
     ####### Methods for the variational problem #######
@@ -328,8 +167,7 @@ class BloodVessel:
             [0, 1],
             [self.c2(U) - self.alpha * (U[1] / U[0]) ** 2, 2 * self.alpha * (U[1] / U[0])]
         ])
-    
-    
+
     ########### Numpy methods for BC problem #############
 
     def B_np(self, U: np.ndarray):
@@ -393,7 +231,7 @@ class BloodVessel:
         flux = self.last_solution["flux"]
 
         # Assume uniform grid along z:
-        z = np.linspace(0, self.long, len(area))
+        z = np.linspace(0, self.L, len(area))
 
         dA_dz = np.gradient(area, z)
         dQ_dz = np.gradient(flux, z)
@@ -434,13 +272,13 @@ class BloodVessel:
     
     #### Methods for branching ####
 
-    def P(self, U: np.ndarray):
+    def P(self, U: np.ndarray, *args, **kwargs):
         assert U.shape == (2, )
         a, q = U
 
         return self.beta * ((np.sqrt(a) - self.A0 ** 0.5) / self.A0) + 0.5 * self.blood.rho * (q / a) ** 2
     
-    def dP_dU(self, U: np.ndarray):
+    def dP_dU(self, U: np.ndarray, *args, **kwargs):
         assert U.shape == (2, )
         a, q = U
 
@@ -476,41 +314,3 @@ class BloodVessel:
         dU_dz_L = self.dU_dz()[0]
 
         return self.CC(uL, dU_dz_L, dt)
-
-
-class VesselSystem:
-    """
-    Class that represents a system of blood vessels and bifurcations.
-    It contains methods to initialize the vessels, set up the system, and manage inflows.
-    """
-
-    def __init__(self, vessels_data: dict, bifurcations_data: dict):
-        self.vessels = {}
-        self.bifurcations = bifurcations_data
-
-        for id, data in vessels_data.items():
-            vessel = BloodVessel(id=id, **data)
-            self.vessels[id] = vessel
-
-    def setup(self, h: float, dt: float):
-        """
-        Set up the system of vessels.
-        This method initializes each vessel with the given mesh size `h` and time step `dt`.
-        It creates the mesh, sets up the finite element space, boundary conditions,
-        initial conditions, and the variational problem for each vessel.
-        """
-
-        for vessel in self.vessels.values():
-            vessel.initial_setup(h, dt)
-
-        MPI.COMM_WORLD.barrier()  # Ensure all processes are synchronized before proceeding
-
-    def set_inflows(self, inflows: dict[int, callable]):
-        """
-        Set the inflows for the vessels.
-        Args:
-            inflows (dict[int, callable]): A dictionary where keys are vessel IDs and values are functions
-                                            that define the inflow conditions for each vessel.
-        """
-
-        self.inflows = inflows

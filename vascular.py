@@ -2,7 +2,8 @@ import numpy as np
 from dolfinx import default_scalar_type
 from dolfinx.fem import petsc
 from petsc4py import PETSc
-from vessel import BloodVessel, VesselSystem
+from vesselV2 import Vessel
+from vesselsystem import VesselSystem
 from tqdm import tqdm
 import os
 from mpi4py import MPI
@@ -31,23 +32,26 @@ class VascularSolver:
         self.h = h
         self.dt = dt
         self.system = None
+        self.vessel_type = "elastic"  # Default vessel type
 
-    def set_system(self, system: VesselSystem):
+    def set_system(self, system: VesselSystem, vessel_type: Literal["elastic", "viscoelastic"] = "elastic"):
         """
         Set the vascular system to be solved.
         Args:
             system (VesselSystem): The vascular system to be solved.
+            vessel_type (str): The type of vessel to be used, either "elastic" or "viscoelastic".
         """
 
         self.system = system
-        self.system.setup(h=self.h, dt=self.dt)
+        self.vessel_type = vessel_type
+        self.system.setup(h=self.h, dt=self.dt, vessel_type=vessel_type)
 
     @profile_this
-    def solve_interior(self, vessel: BloodVessel, store_solution: bool = True):
+    def solve_interior(self, vessel: Vessel, store_solution: bool = True):
         """
         Solve the interior problem for a single blood vessel.
         Args:
-            vessel (BloodVessel): The blood vessel to be solved.
+            vessel (Vessel): The blood vessel to be solved.
             store_solution (bool): Whether to store the solution in the vessel's solution history.
         """
         
@@ -70,88 +74,91 @@ class VascularSolver:
         vessel.add_solution(vessel.u, save_all=store_solution)
 
     @profile_this
-    def solve_inflow_BC(self, vessel: BloodVessel, t: float):
+    def solve_inflow_BC(self, vessel: Vessel, t: float):
         """
         Solve the inflow boundary condition for a single blood vessel.
         Args:
-            vessel (BloodVessel): The blood vessel to be solved.
+            vessel (Vessel): The blood vessel to be solved.
             t (float): The current time in the simulation.
         """
 
         if "inflow" not in [vessel.LB_type, vessel.RB_type]:
             return
-        
-        vessel_A = vessel.last_solution["area"]
-        vessel_Q = vessel.last_solution["flux"]
-
-        sol = np.column_stack((vessel_A, vessel_Q)).reshape((len(vessel_A), 2))
 
         inflow_func = self.system.inflows[vessel.id]
 
         if vessel.LB_type == "inflow":
 
-            uL = sol[0]
-            du_dz_L = vessel.dU_dz()[0]
+            uL = vessel.LB
 
             q = inflow_func(t) * vessel.A0
             i2 = vessel.I2(uL)
-            A = (i2 @ vessel.CC(uL, du_dz_L, self.dt) - i2[1] * q) / (i2[0] + 1e-12)
 
-            vessel.LB = np.array([A, q], dtype=default_scalar_type)
+            A = (i2 @ vessel.CCL(self.dt) - i2[1] * q) / (i2[0] + 1e-12)
+
+            if self.vessel_type == "viscoelastic":
+                xi = vessel.xiL(self.dt)
+                vessel.LB = np.array([A, q, xi], dtype=default_scalar_type)
+            else:
+                vessel.LB = np.array([A, q], dtype=default_scalar_type)
 
         else:
-            uR = sol[-1]
-            du_dz_R = vessel.dU_dz()[-1]
+            uR = vessel.RB
             
             q = -inflow_func(t) * vessel.A0
             i1 = vessel.I1(uR)
-            A = (i1 @ vessel.CC(uR, du_dz_R, self.dt) - i1[1] * q) / (i1[0] + 1e-12)
+            A = (i1 @ vessel.CCR(self.dt) - i1[1] * q) / (i1[0] + 1e-12)
 
-            vessel.RB = np.array([A, q], dtype=default_scalar_type)
+            if self.vessel_type == "viscoelastic":
+                xi = vessel.xiR(self.dt)
+                vessel.RB = np.array([A, q, xi], dtype=default_scalar_type)
+            else:
+                vessel.RB = np.array([A, q], dtype=default_scalar_type)
 
     @profile_this
-    def solve_outflow_BC(self, vessel: BloodVessel):
+    def solve_outflow_BC(self, vessel: Vessel):
         """
         Solve the outflow boundary condition for a single blood vessel.
         Args:
-            vessel (BloodVessel): The blood vessel to be solved.
+            vessel (Vessel): The blood vessel to be solved.
         """
 
         if "outflow" not in [vessel.LB_type, vessel.RB_type]:
             return
         
-        vessel_A = vessel.last_solution["area"]
-        vessel_Q = vessel.last_solution["flux"]
-
-        sol = np.column_stack((vessel_A, vessel_Q)).reshape((len(vessel_A), 2))
-
         if vessel.LB_type == "outflow":
             # uL = sol[0]
             # du_dz_L = vessel.dU_dz()[0]
             # vessel.LB = vessel.W0(uL) @ vessel.Y0(uL, du_dz_L, self.dt)
 
-            uL = sol[0]
-            du_dz_L = vessel.dU_dz()[0]
+            uL = vessel.LB
 
             A = vessel.A0
             i2 = vessel.I2(uL)
-            q = (i2 @ vessel.CC(uL, du_dz_L, self.dt) - i2[0] * A) / (i2[1] + 1e-12)
+            q = (i2 @ vessel.CCL(self.dt) - i2[0] * A) / (i2[1] + 1e-12)
 
-            vessel.LB = np.array([A, q], dtype=default_scalar_type)
+            if self.vessel_type == "viscoelastic":
+                xi = vessel.xiL(self.dt)
+                vessel.LB = np.array([A, q, xi], dtype=default_scalar_type)
+            else:
+                vessel.LB = np.array([A, q], dtype=default_scalar_type)
 
         if vessel.RB_type == "outflow":
             # uR = sol[-1]
             # du_dz_R = vessel.dU_dz()[-1]
             # vessel.RB = vessel.WL(uR) @ vessel.YL(uR, du_dz_R, self.dt)
 
-            uR = sol[-1]
-            du_dz_R = vessel.dU_dz()[-1]
+            uR = vessel.RB
             
             A = vessel.A0
             i1 = vessel.I1(uR)
-            q = (i1 @ vessel.CC(uR, du_dz_R, self.dt) - i1[0] * A) / (i1[1] + 1e-12)
+            q = (i1 @ vessel.CCR(self.dt) - i1[0] * A) / (i1[1] + 1e-12)
 
-            vessel.RB = np.array([A, q], dtype=default_scalar_type)
+            if self.vessel_type == "viscoelastic":
+                xi = vessel.xiR(self.dt)
+                vessel.RB = np.array([A, q, xi], dtype=default_scalar_type)
+            else:
+                vessel.RB = np.array([A, q], dtype=default_scalar_type)
 
 
     def create_newton(self, bifurcation: dict, gamma: float = 2.0):
@@ -166,7 +173,6 @@ class VascularSolver:
             U0 (np.ndarray): Initial guess for the solution.
         """
 
-
         v1, v2, v3 = [self.system.vessels[vessel_id] 
                       for vessel_id in bifurcation["branches"]]
 
@@ -180,15 +186,30 @@ class VascularSolver:
         CC2 = v2.CCR(self.dt) if bifurcation["positions"][1] == "right" else v2.CCL(self.dt)
         CC3 = v3.CCR(self.dt) if bifurcation["positions"][2] == "right" else v3.CCL(self.dt)
 
+        if self.vessel_type == "viscoelastic":
+            i1 = i1[:2]
+            i2 = i2[:2]
+            i3 = i3[:2]
+
+            CC1 = CC1[:2]
+            CC2 = CC2[:2]
+            CC3 = CC3[:2]
+
         positions = np.array([
             1 if pos == "right" else -1
             for pos in bifurcation["positions"]
         ])
 
+        pos_names = bifurcation["positions"]
+
         def N(U):
             u1 = U[:2]
             u2 = U[2:4]
             u3 = U[4:6]
+
+            P1 = v1.P(u1, pos_names[0], self.dt)
+            P2 = v2.P(u2, pos_names[1], self.dt)
+            P3 = v3.P(u3, pos_names[2], self.dt)
 
             return np.array([
                 np.dot(
@@ -196,13 +217,12 @@ class VascularSolver:
                     positions
                 ),
 
-                v1.P(u1) - v2.P(u2) - v2.f_branch(u2, th2, gamma),
-                v1.P(u1) - v3.P(u3) - v3.f_branch(u3, th3, gamma),
+                P1 - P2 - v2.f_branch(u2, th2, gamma),
+                P1 - P3 - v3.f_branch(u3, th3, gamma),
                 np.dot(i1, u1) - np.dot(i1, CC1),
                 np.dot(i2, u2) - np.dot(i2, CC2),
                 np.dot(i3, u3) - np.dot(i3, CC3)
             ])
-        
 
         def J(U):
             j = np.zeros((6, 6))
@@ -215,9 +235,9 @@ class VascularSolver:
             j[0, 3] = positions[1]
             j[0, 5] = positions[2]
 
-            dP1 = v1.dP_dU(u1)
-            dP2 = v2.dP_dU(u2)
-            dP3 = v3.dP_dU(u3)
+            dP1 = v1.dP_dU(u1, pos_names[0], self.dt)
+            dP2 = v2.dP_dU(u2, pos_names[1], self.dt)
+            dP3 = v3.dP_dU(u3, pos_names[2], self.dt)
 
             df2 = v2.df_dU(u2, th2, gamma)
             df3 = v3.df_dU(u3, th3, gamma)
@@ -312,10 +332,23 @@ class VascularSolver:
                             for vessel_id in bif["branches"]]
             
             for i, vessel in enumerate(vessels):
-                if bif["positions"][i] == "left":
-                    vessel.LB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type)
-                else:
-                    vessel.RB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type)
+                    if bif["positions"][i] == "left":
+                        if self.vessel_type == "viscoelastic":
+                            # For viscoelastic vessels, we also set the xi value
+                            xi = vessel.xiL(self.dt)
+                            lb = u_curr[i*2:i*2+2]
+                            vessel.LB = np.array([lb[0], lb[1], xi], dtype=default_scalar_type)
+                        else:
+                            vessel.LB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type)
+                    else:
+                        if self.vessel_type == "viscoelastic":
+                            # For viscoelastic vessels, we also set the xi value
+                            xi = vessel.xiR(self.dt)
+                            rb = u_curr[i*2:i*2+2]
+                            vessel.RB = np.array([rb[0], rb[1], xi], dtype=default_scalar_type)
+                        else:
+                            # For elastic vessels, we just set the area and flux
+                            vessel.RB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type)
 
     def _broadcast_updated_BCs(self):
         """
@@ -326,8 +359,12 @@ class VascularSolver:
         """
         for vessel_id, vessel in self.system.vessels.items():
             # Prepare two 2‐entry buffers for LB and RB
-            lb_buf = np.zeros(2, dtype=default_scalar_type)
-            rb_buf = np.zeros(2, dtype=default_scalar_type)
+            dim = 2  # Default for elastic vessels
+            if self.vessel_type == "viscoelastic":
+                dim = 3
+
+            lb_buf = np.zeros(dim, dtype=default_scalar_type)
+            rb_buf = np.zeros(dim, dtype=default_scalar_type)
 
             if rank == 0:
                 # On rank 0, load the “true” BCs into the buffers.
