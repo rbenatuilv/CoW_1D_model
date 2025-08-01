@@ -51,6 +51,8 @@ class VascularSolver:
             store_solution (bool): Whether to store the solution in the vessel's solution history.
         """
         
+        ## CAMBIAR POR DG, VERIFICAR IMPOSICION DE CONDICIONES DE CONTORNO
+
         with vessel.rhs.localForm() as loc_b:
             loc_b.set(0)
         petsc.assemble_vector(vessel.rhs, vessel.linear)

@@ -182,13 +182,12 @@ class BloodVessel:
             self.middlepoints["flux"].append(global_sol[len(global_sol) // 2, 1])
 
 
-    def set_variational_problem(self, dt: float):
+    def set_variational_problem(self, dt: float, method: Literal["CG", "DG"] = "CG"):
         """
         Set up the variational problem for the blood vessel.
         This method creates the bilinear and linear forms, assembles the matrix and vector,
         and sets up the solver.
         """
-
 
         assert self.V is not None, "Function space not set. Call create_fem_space() first."
         assert self.bcs, "Boundary conditions not set. Call set_boundary_conditions() first."
@@ -196,12 +195,24 @@ class BloodVessel:
         u = ufl.TrialFunction(self.V)
         v = ufl.TestFunction(self.V)
 
-        a = ufl.inner(u, v) * ufl.dx
-        L = ufl.inner(self.u_n, v) * ufl.dx
-        L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx
-        L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx
-        L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx
-        L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx
+        if method == "CG":
+            a = ufl.inner(u, v) * ufl.dx
+            L = ufl.inner(self.u_n, v) * ufl.dx
+            L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx
+            L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx
+            L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx
+            L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx
+        
+        elif method == "DG":
+
+            flux_int = self.numflux(self.u_n('+'), self.u_n('-'), 10)
+
+            a = ufl.inner(u, v) * ufl.dx
+            L = ufl.inner(self.u_n, v) * ufl.dx
+            L += dt * ufl.inner(self.F(self.u_n, dt), v.dx(0)) * ufl.dx
+            L -= dt * ufl.inner(self.B(self.u_n), v) * ufl.dx
+            L -= dt * (flux_int * v('+') - flux_int * v('-')) * ufl.dS
+
 
         self.bilinear = fem.form(a)
         self.linear = fem.form(L)
@@ -219,19 +230,19 @@ class BloodVessel:
         self.u = fem.Function(self.V)
         self.u.x.array[:] = self.u_n.x.array
 
-    def initial_setup(self, h: float, dt: float):
+    def initial_setup(self, h: float, dt: float, method: Literal["CG", "DG"] = "CG"):
         """
         Initial setup for the blood vessel.
         This method creates the mesh, sets up the finite element space, boundary conditions,
         initial conditions, and the variational problem.
         """
 
-        self.create_mesh(h)
+        self.create_mesh(h, method)
         self.create_fem_space()
         self.set_boundary_dofs()
         self.set_boundary_conditions()
         self.set_initial_conditions()
-        self.set_variational_problem(dt)
+        self.set_variational_problem(dt, method)
 
     def save_middlepoint_plot(self, T: float, quantity: Literal["area", "flux"], filename: str):
         """
@@ -331,6 +342,9 @@ class BloodVessel:
             [0, 1],
             [self.c2(U) - self.alpha * (U[1] / U[0]) ** 2, 2 * self.alpha * (U[1] / U[0])]
         ])
+    
+    def numflux(self, u_minus, u_plus, alpha):
+        return 0.5*(self.F(u_minus) + self.F(u_plus)) - 0.5 * alpha * (u_plus - u_minus)
     
     
     ########### Numpy methods for BC problem #############
