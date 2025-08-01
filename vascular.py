@@ -32,7 +32,7 @@ class VascularSolver:
         self.dt = dt
         self.system = None
 
-    def set_system(self, system: VesselSystem):
+    def set_system(self, system: VesselSystem, method: Literal["CG", "DG"] = "CG"):
         """
         Set the vascular system to be solved.
         Args:
@@ -40,7 +40,7 @@ class VascularSolver:
         """
 
         self.system = system
-        self.system.setup(h=self.h, dt=self.dt)
+        self.system.setup(h=self.h, dt=self.dt, method=method)
 
     @profile_this
     def solve_interior(self, vessel: BloodVessel, store_solution: bool = True):
@@ -50,8 +50,6 @@ class VascularSolver:
             vessel (BloodVessel): The blood vessel to be solved.
             store_solution (bool): Whether to store the solution in the vessel's solution history.
         """
-        
-        ## CAMBIAR POR DG, VERIFICAR IMPOSICION DE CONDICIONES DE CONTORNO
 
         with vessel.rhs.localForm() as loc_b:
             loc_b.set(0)

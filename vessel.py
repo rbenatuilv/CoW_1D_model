@@ -182,7 +182,7 @@ class BloodVessel:
             self.middlepoints["flux"].append(global_sol[len(global_sol) // 2, 1])
 
 
-    def set_variational_problem(self, dt: float, method: Literal["CG", "DG"] = "CG"):
+    def set_variational_problem(self, dt: float, method: Literal["CG", "DG"] = "CG", h: float = 0.03125):
         """
         Set up the variational problem for the blood vessel.
         This method creates the bilinear and linear forms, assembles the matrix and vector,
@@ -204,15 +204,21 @@ class BloodVessel:
             L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx
         
         elif method == "DG":
+            ## SIP method
+            alpha = 1000 / h
 
-            flux_int = self.numflux(self.u_n('+'), self.u_n('-'), 10)
-
+            # For DG method, we need to handle the bilinear form properly
             a = ufl.inner(u, v) * ufl.dx
+            # Add SIP stabilization terms to the bilinear form
+            # a += alpha * ufl.inner(ufl.jump(u), ufl.jump(v)) * ufl.dS
+            
             L = ufl.inner(self.u_n, v) * ufl.dx
-            L += dt * ufl.inner(self.F(self.u_n, dt), v.dx(0)) * ufl.dx
+            L += dt * ufl.inner(self.F(self.u_n), v.dx(0)) * ufl.dx
             L -= dt * ufl.inner(self.B(self.u_n), v) * ufl.dx
-            L -= dt * (flux_int * v('+') - flux_int * v('-')) * ufl.dS
-
+            # For DG, we need to handle the flux terms properly
+            L -= dt * ufl.inner(ufl.avg(self.F(self.u_n)), ufl.jump(v)) * ufl.dS
+            # Remove the problematic term with F(v)
+            L += dt * alpha * ufl.inner(ufl.jump(self.u_n), ufl.jump(v)) * ufl.dS
 
         self.bilinear = fem.form(a)
         self.linear = fem.form(L)
@@ -237,12 +243,18 @@ class BloodVessel:
         initial conditions, and the variational problem.
         """
 
-        self.create_mesh(h, method)
-        self.create_fem_space()
+        self.create_mesh(h)
+
+        if method == "CG":
+            element_type = "Lagrange"
+        elif method == "DG":
+            element_type = "DG"
+
+        self.create_fem_space(element_type=element_type)
         self.set_boundary_dofs()
         self.set_boundary_conditions()
         self.set_initial_conditions()
-        self.set_variational_problem(dt, method)
+        self.set_variational_problem(dt, method, h)
 
     def save_middlepoint_plot(self, T: float, quantity: Literal["area", "flux"], filename: str):
         """
@@ -509,7 +521,7 @@ class VesselSystem:
             vessel = BloodVessel(id=id, **data)
             self.vessels[id] = vessel
 
-    def setup(self, h: float, dt: float):
+    def setup(self, h: float, dt: float, method: Literal["CG", "DG"] = "CG"):
         """
         Set up the system of vessels.
         This method initializes each vessel with the given mesh size `h` and time step `dt`.
@@ -518,7 +530,7 @@ class VesselSystem:
         """
 
         for vessel in self.vessels.values():
-            vessel.initial_setup(h, dt)
+            vessel.initial_setup(h, dt, method)
 
         MPI.COMM_WORLD.barrier()  # Ensure all processes are synchronized before proceeding
 

@@ -24,7 +24,7 @@ def main(T: float = 1.0, mode: str = "main", profile: bool = False):
     system.set_inflows(inflows)
 
     solver = VascularSolver(h=h, dt=dt)
-    solver.set_system(system)
+    solver.set_system(system, method="DG")  # Change to "DG" for DG method
 
     solver.solve(T)
     solver.plot_solutions(T=T, mode=mode)
