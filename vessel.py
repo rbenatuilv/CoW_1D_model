@@ -7,8 +7,6 @@ from typing import Literal
 import matplotlib.pyplot as plt
 import os 
 
-from abc import ABC, abstractmethod
-
 
 class Blood:
     DYNAMIC_VISCOSITY = 0.045  # Poise = g/(cm·s)
