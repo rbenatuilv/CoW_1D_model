@@ -1,125 +1,125 @@
 {
     "BAS": {
-        "longitude": 1.28,
+        "length": 1.28,
         "initial_area": 0.0740,
         "beta_coeff": 0.0725e7,
         "left_bound": "inflow",
         "right_bound": "branch"
     },
     "L-PCA_I": {
-        "longitude": 1.3212,
+        "length": 1.3212,
         "initial_area": 0.0347,
         "beta_coeff": 0.0993e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "L-PCA_II": {
-        "longitude": 3.0909,
+        "length": 3.0909,
         "initial_area": 0.0338,
         "beta_coeff": 0.0981e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "L-PCommA": {
-        "longitude": 1.713,
+        "length": 1.713,
         "initial_area": 0.0256,
         "beta_coeff": 0.0853e7,
         "left_bound": "branch",
         "right_bound": "branch"
     }, 
     "L-ICA_I": {
-        "longitude": 4.2887,
+        "length": 4.2887,
         "initial_area": 0.1252,
         "beta_coeff": 0.0944e7,
         "left_bound": "branch",
         "right_bound": "inflow"
     },
     "L-ICA_II": {
-        "longitude": 0.4203,
+        "length": 0.4203,
         "initial_area": 0.0756,
         "beta_coeff": 0.1467e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "L-ACA_I": {
-        "longitude": 3.0665,
+        "length": 3.0665,
         "initial_area": 0.0288,
         "beta_coeff": 0.0905e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "L-MCA": {
-        "longitude": 4.4854,
+        "length": 4.4854,
         "initial_area": 0.0580,
         "beta_coeff": 0.1284e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "R-PCA_I": {
-        "longitude": 1.0012,
+        "length": 1.0012,
         "initial_area": 0.0295,
         "beta_coeff": 0.0916e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "R-PCA_II": {
-        "longitude": 2.5496,
+        "length": 2.5496,
         "initial_area": 0.0331,
         "beta_coeff": 0.0970e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "R-PCommA": {
-        "longitude": 1.8936,
+        "length": 1.8936,
         "initial_area": 0.0301,
         "beta_coeff": 0.0926e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "R-ICA_I": {
-        "longitude": 4.8650,
+        "length": 4.8650,
         "initial_area": 0.1260,
         "beta_coeff": 0.0946e7,
         "left_bound": "branch",
         "right_bound": "inflow"
     },
     "R-ICA_II": {
-        "longitude": 0.6961,
+        "length": 0.6961,
         "initial_area": 0.0800,
         "beta_coeff": 0.1509e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "R-ACA_I": {
-        "longitude": 2.1127,
+        "length": 2.1127,
         "initial_area": 0.0435,
         "beta_coeff": 0.1113e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "R-MCA": {
-        "longitude": 3.3325,
+        "length": 3.3325,
         "initial_area": 0.0623,
         "beta_coeff": 0.1331e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "ACA": {
-        "longitude": 0.4632,
+        "length": 0.4632,
         "initial_area": 0.0214,
         "beta_coeff": 0.0781e7,
         "left_bound": "branch",
         "right_bound": "branch"
     },
     "L-ACA_II": {
-        "longitude": 4.4019,
+        "length": 4.4019,
         "initial_area": 0.0218,
         "beta_coeff": 0.0894e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "R-ACA_II": {
-        "longitude": 3.9169,
+        "length": 3.9169,
         "initial_area": 0.0323,
         "beta_coeff": 0.0958e7,
         "left_bound": "branch",

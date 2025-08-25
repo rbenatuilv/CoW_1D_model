@@ -9,7 +9,7 @@ def main(T: float = 1.0, mode: str = "main", profile: bool = False):
 
     T = T
     h = 2 * 0.03125
-    dt = 1 * 1e-5 
+    dt = 1 * 1e-5
 
     mode = mode  # Change to "main" for main mode
 
