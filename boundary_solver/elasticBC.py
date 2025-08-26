@@ -1,7 +1,7 @@
 from dolfinx import default_scalar_type # type: ignore
 import numpy as np
 
-from elastic_vessel import ElasticVessel
+from vessel_models.elastic_vessel import ElasticVessel
 
 
 class ElasticBCSolver:

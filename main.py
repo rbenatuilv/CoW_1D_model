@@ -15,7 +15,7 @@ def main(T: float = 1.0, mode: Literal["main", "test"] = "main"):
 
     network = VascularNetwork(vessels_data, bif_data, inflows)
 
-    solver = VascularSolver(network, method="CG")
+    solver = VascularSolver(network, method="DG")
     solver.setup(h=h, dt=dt)
 
     solver.solve(t_end=T)

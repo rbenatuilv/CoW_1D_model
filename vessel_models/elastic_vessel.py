@@ -2,7 +2,7 @@ from mpi4py import MPI # type: ignore
 from dolfinx import fem # type: ignore
 import ufl
 import numpy as np
-from vessel import BloodVessel
+from .vessel import BloodVessel
 
 
 class ElasticVessel(BloodVessel):
@@ -29,6 +29,9 @@ class ElasticVessel(BloodVessel):
     def BLW(self, u: fem.Function, dt: float):
         return self.B(u) - (dt / 2) * ufl.dot(self.dB_dU(u), self.B(u)) # type: ignore
     
+    def c_alpha_ufl(self, u: fem.Function):
+        return ufl.sqrt(self.c2(u) + self.alpha * (self.alpha - 1) * (u[1] / u[0]) ** 2)
+
     def c2(self, u: fem.Function):
         return (self.beta / (2 * self.rho * self.A0)) * u[0] ** 0.5
     

@@ -6,7 +6,7 @@ import os
 from typing import Literal
 
 from vascular_net import VascularNetwork
-from elasticBC import ElasticBCSolver
+from boundary_solver.elasticBC import ElasticBCSolver
 
 
 class VascularSolver:

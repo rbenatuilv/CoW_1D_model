@@ -8,7 +8,7 @@ from petsc4py import PETSc # type: ignore
 import numpy as np
 from typing import Optional
 
-from elastic_vessel import ElasticVessel
+from vessel_models.elastic_vessel import ElasticVessel
 
 
 class ElasticCGVessel(ElasticVessel):

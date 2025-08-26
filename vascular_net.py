@@ -1,5 +1,5 @@
-from elasticCG import ElasticCGVessel
-
+from methods.elasticCG import ElasticCGVessel
+from methods.elasticDG import ElasticDGVessel
 
 class VascularNetwork:
     def __init__(self, vessels_data: dict, bifurcations_data: dict, inflows: dict):
@@ -14,6 +14,9 @@ class VascularNetwork:
             if model == "Elastic":
                 if method == "CG":
                     vessel = ElasticCGVessel(id=id, **params)
+                elif method == "DG":
+                    vessel = ElasticDGVessel(id=id, **params)
+
                 else:
                     raise ValueError(f"Method {method} not recognized for model {model}.")
             else:
