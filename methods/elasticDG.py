@@ -24,6 +24,7 @@ class ElasticDGVessel(ElasticVessel):
     def create_mesh(self, h: float):
         n = int(self.L / h)
         self.mesh = mesh.create_interval(MPI.COMM_WORLD, n, (0, self.L))
+        self.h = h
 
     def create_mesh_tags(self):
         tdim = self.mesh.topology.dim
@@ -52,13 +53,17 @@ class ElasticDGVessel(ElasticVessel):
         self.V = fem.functionspace(self.mesh, elem)
 
         self.u = fem.Function(self.V)  # Current time step solution
+        self.v = fem.Function(self.V)  # auxiliary solution
+
         self.u_n = fem.Function(self.V)  # Previous
+        self.v_n = fem.Function(self.V)  # auxiliary previous solution
 
     def set_initial_condition(self):
         if self.V is None or self.u_n is None:
             raise ValueError("Function space not created. Call create_fem_space() first.")
         
         self.u_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
+        self.v_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
 
     def max_eigval(self, u: fem.Function):
         eigval1 = self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
@@ -73,8 +78,8 @@ class ElasticDGVessel(ElasticVessel):
         lambda_max = ufl.max_value(self.max_eigval(u('+')), self.max_eigval(u('-')))
 
         # Lax-Friedrichs numerical flux
-        flux_avg = 0.5 * (self.F(u('+')) + self.F(u('-'))) # type: ignore
-        jump = u('+') - u('-')
+        flux_avg = ufl.avg(self.F(u)) # type: ignore
+        jump = ufl.jump(u)
         return flux_avg - 0.5 * lambda_max * jump # type: ignore
 
     def LxF_bound_L(self, u: fem.Function):
@@ -92,25 +97,57 @@ class ElasticDGVessel(ElasticVessel):
         flux_avg = 0.5 * (self.F(u) + self.F(self.RB_fem)) # type: ignore
         jump = self.RB_fem - u
         return flux_avg - 0.5 * lambda_max * jump # type: ignore
+    
+    def dU_dz(self, u: np.ndarray):
+        area = u[:, 0]
+        flux = u[:, 1]
 
-    def set_variational_problem(self, dt: float):
+        h = self.L / (len(area) // 2)
+
+        dA = []
+        for i in range(0, len(area), 2):
+            derv = (area[i+1] - area[i]) / h
+            dA.append(derv)
+
+        dQ = []
+        for i in range(0, len(flux), 2):
+            derv = (flux[i+1] - flux[i]) / h
+            dQ.append(derv)
         
+        return np.stack([dA, dQ], axis=-1)
+
+    def HxF(self, u: fem.Function, v: fem.Function):
         ds = ufl.Measure("ds", domain=self.mesh, subdomain_data=self.msh_tags)
 
-        u = ufl.TrialFunction(self.V)
-        v = ufl.TestFunction(self.V)
+        L = -ufl.inner(self.B(u), v) * ufl.dx # type: ignore
+        L += ufl.inner(self.F(u), v.dx(0)) * ufl.dx # type: ignore
+        L += ufl.inner(self.LxF(u), ufl.jump(v)) * ufl.dS # type: ignore
+        L += ufl.inner(self.LxF_bound_L(u), v) * ds(1) # type: ignore
+        L += ufl.inner(self.LxF_bound_R(u), v) * ds(2) # type: ignore
 
-        a = ufl.inner(u, v) * ufl.dx
-        L = ufl.inner(self.u_n, v) * ufl.dx
-        L -= dt * ufl.inner(self.B(self.u_n), v) * ufl.dx # type: ignore
-        L += dt * ufl.inner(self.F(self.u_n), v.dx(0)) * ufl.dx # type: ignore
-        L += dt * ufl.inner(self.LxF(self.u_n), ufl.jump(v)) * ufl.dS # type: ignore
+        return L
 
-        L += dt * ufl.inner(self.LxF_bound_L(self.u_n), v) * ds(1) # type: ignore
-        L += dt * ufl.inner(self.LxF_bound_R(self.u_n), v) * ds(2) # type: ignore
+    def set_variational_problem(self, dt: float):
+        u1 = ufl.TrialFunction(self.V)
+        v1 = ufl.TestFunction(self.V)
 
-        self.bilinear_form = fem.form(a)
-        self.linear_form = fem.form(L)
+        a1 = ufl.inner(u1, v1) * ufl.dx
+        L1 = ufl.inner(self.u_n, v1) * ufl.dx
+        L1 += dt * self.HxF(self.u_n, v1) # type: ignore
+
+        self.bilinear_form_1 = fem.form(a1)
+        self.linear_form_1 = fem.form(L1)
+
+        u2 = ufl.TrialFunction(self.V)
+        v2 = ufl.TestFunction(self.V)
+
+        a2 = ufl.inner(u2, v2) * ufl.dx
+        L2 = 0.5 * ufl.inner(self.u_n, v2) * ufl.dx # type: ignore
+        L2 += 0.5 * ufl.inner(self.v_n, v2) * ufl.dx # type: ignore
+        L2 += 0.5 * dt * self.HxF(self.v_n, v2) # type: ignore
+
+        self.bilinear_form_2 = fem.form(a2)
+        self.linear_form_2 = fem.form(L2)
 
     def update_BCs(self, LB: Optional[np.ndarray] = None, RB: Optional[np.ndarray] = None):
         # Ensure we have valid boundary values
@@ -134,18 +171,25 @@ class ElasticDGVessel(ElasticVessel):
         if self.mesh is None or self.V is None:
             raise ValueError("Mesh or function space not created. Call create_mesh() and create_fem_space() first.")
         
-        if self.bilinear_form is None or self.linear_form is None:
-            raise ValueError("Variational problem not fully defined. Call set_variational_problem() and update_BCs() first.")
+        self.A1 = petsc.assemble_matrix(self.bilinear_form_1)
+        self.A1.assemble()
 
-        self.A = petsc.assemble_matrix(self.bilinear_form)
-        self.A.assemble()
+        self.rhs_1 = petsc.create_vector(self.linear_form_1)
 
-        self.rhs = petsc.create_vector(self.linear_form)
+        self.solver_1 = PETSc.KSP().create(self.mesh.comm)
+        self.solver_1.setOperators(self.A1)
+        self.solver_1.setType(PETSc.KSP.Type.PREONLY)
+        self.solver_1.getPC().setType(PETSc.PC.Type.LU)
 
-        self.solver = PETSc.KSP().create(self.mesh.comm)
-        self.solver.setOperators(self.A)
-        self.solver.setType(PETSc.KSP.Type.PREONLY)
-        self.solver.getPC().setType(PETSc.PC.Type.LU)
+        self.A2 = petsc.assemble_matrix(self.bilinear_form_2)
+        self.A2.assemble()
+
+        self.rhs_2 = petsc.create_vector(self.linear_form_2)
+
+        self.solver_2 = PETSc.KSP().create(self.mesh.comm)
+        self.solver_2.setOperators(self.A2)
+        self.solver_2.setType(PETSc.KSP.Type.PREONLY)
+        self.solver_2.getPC().setType(PETSc.PC.Type.LU)
 
     def setup(self, h: float, dt: float):
         self.create_mesh(h)
@@ -160,20 +204,34 @@ class ElasticDGVessel(ElasticVessel):
         self.dt = dt
 
     def solve(self):
-        if self.solver is None or self.rhs is None:
-            raise ValueError("Solver not assembled. Call assemble_solver() first.")
 
-        with self.rhs.localForm() as loc:
+        with self.rhs_1.localForm() as loc:
             loc.set(0)
-        petsc.assemble_vector(self.rhs, self.linear_form)
-        self.rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        petsc.assemble_vector(self.rhs_1, self.linear_form_1)
+        self.rhs_1.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
-        self.solver.solve(self.rhs, self.u.x.petsc_vec)
+        self.solver_1.solve(self.rhs_1, self.v.x.petsc_vec)
+        self.v.x.scatter_forward()
+        self.v_n.x.array[:] = self.v.x.array[:]
+
+        with self.rhs_2.localForm() as loc:
+            loc.set(0)
+        petsc.assemble_vector(self.rhs_2, self.linear_form_2)
+        self.rhs_2.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE) 
+        
+        self.solver_2.solve(self.rhs_2, self.u.x.petsc_vec)
         self.u.x.scatter_forward()
         self.u_n.x.array[:] = self.u.x.array[:]
 
         if np.any(np.isnan(self.u.x.array)):
             raise ValueError("NaN values encountered in the solution.")
+
+    def get_max_cfl_dt(self):
+        """Calculate maximum stable time step based on CFL condition"""
+        # Get maximum wave speed (eigenvalue)
+        c_max = np.sqrt(self.beta / (2 * self.rho * self.A0))  # Approximate wave speed
+        return 0.5 * self.h / c_max  # CFL < 0.5 for stability
+
 
     def add_solution(self, t: float):
         if self.mesh is None or self.V is None:
@@ -223,7 +281,8 @@ if __name__ == "__main__":
     }
 
     vessel = ElasticDGVessel(**data)
-    vessel.create_mesh(h=0.01)
+    h = 2 * 0.03125
+    vessel.setup(h, dt=1e-5)
+    print("Max CFL dt:", vessel.get_max_cfl_dt())
+
     
-    tdim = vessel.mesh.topology.dim
-    print(vessel.mesh.topology.create_entities(tdim - 1))
