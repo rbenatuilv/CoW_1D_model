@@ -6,7 +6,7 @@ import profiler.profiler as prf
 
 def main(T: float = 1.0, mode: str = "main", profile: bool = False):
     prf.ENABLE_PROFILING = profile
-
+    print("\n\n\n\n\n", flush=True)
     T = T
     h = 2 * 0.03125
     dt = 1 * 1e-5 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # Search the -T argument in the command line arguments
     T = 1.0
-    mode = "main"
+    mode = "test"
     profile = False
     for i, arg in enumerate(sys.argv):
         if arg == "-T" and i + 1 < len(sys.argv):

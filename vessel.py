@@ -10,6 +10,24 @@ from typing import Literal
 import matplotlib.pyplot as plt
 import os
 
+from dolfinx.cpp.graph import AdjacencyList_int32
+
+def seq_graph_partitioner(comm, nparts, dual_graph, redistribute):
+    print("dual_graph:")
+    print(dual_graph)
+    local_n   = len(dual_graph)
+    counts    = comm.allgather(local_n)
+    offset    = sum(counts[:comm.rank])
+    global_id = offset + np.arange(local_n, dtype=np.int64)
+
+    base, r   = divmod(sum(counts), nparts)
+    owners    = np.concatenate([
+        np.full(base + (i < r), i, dtype=np.int32)
+        for i in range(nparts)
+    ])
+
+    return AdjacencyList_int32(owners[global_id])
+
 
 class Blood:
 
@@ -94,7 +112,8 @@ class BloodVessel:
 
     def create_mesh(self, h: float):
         N = int(self.long / h)
-        self.mesh = mesh.create_interval(MPI.COMM_WORLD, N, (0, self.long))
+        self.N = N
+        self.mesh = mesh.create_interval(MPI.COMM_WORLD, N, (0, self.long)) # , partitioner=seq_graph_partitioner
 
     def create_fem_space(self, element_type: str = "Lagrange"):
         if self.mesh is None:
@@ -113,9 +132,12 @@ class BloodVessel:
     def set_boundary_dofs(self):
         if self.V is None:
             raise ValueError("Function space not set. Call create_fem_space() first.")
-
+        local_range = self.V.dofmap.index_map.local_range
         self.dofs_L = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], 0.0))
         self.dofs_R = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], self.long))
+        
+        # self.dofs_L = self.dofs_L[(self.dofs_L >= local_range[0]) & (self.dofs_L < local_range[1])]
+        # self.dofs_R = self.dofs_R[(self.dofs_R >= local_range[0]) & (self.dofs_R < local_range[1])]
 
     def set_boundary_conditions(self):
         assert self.V is not None, "Function space not set. Call set_fem_space() first."
@@ -123,6 +145,19 @@ class BloodVessel:
         bc_L = fem.dirichletbc(self.LB, self.dofs_L, self.V)
         bc_R = fem.dirichletbc(self.RB, self.dofs_R, self.V)
         self.bcs = [bc_L, bc_R]
+        print(f"Boundary conditions set: {self.LB} --- y --- {self.RB}", flush=True)
+        
+        # # Apply area BC at left, flux BC at left
+        # bc_L_area = fem.dirichletbc(self.LB[0], self.dofs_L, self.V.sub(0))
+        # bc_L_flux = fem.dirichletbc(self.LB[1], self.dofs_L, self.V.sub(1))
+
+        # # Apply area BC at right, flux BC at right
+        # bc_R_area = fem.dirichletbc(self.RB[0], self.dofs_R, self.V.sub(0))
+        # bc_R_flux = fem.dirichletbc(self.RB[1], self.dofs_R, self.V.sub(1))
+
+        # self.bcs = [bc_L_area, bc_L_flux, bc_R_area, bc_R_flux]
+        # if self.id == "1" and self.mesh.comm.rank == 0:
+        #     print(f"Boundary conditions set: LB={self.LB}, RB={self.RB}", flush=True)
 
     def set_initial_conditions(self):
         assert self.V is not None, "Function space not set. Call create_fem_space() first."
@@ -132,7 +167,185 @@ class BloodVessel:
 
         self.add_solution(self.u_n)
 
-    def add_solution(self, u: fem.Function, save_all: bool = True):
+
+    def add_solution4(self, u: fem.Function):
+        """
+        Stores the vessel solution by gathering data on rank 0,
+        correctly handling distributed DOFs and ghost cells.
+        """
+        comm = self.mesh.comm
+        rank = comm.Get_rank()
+
+        # Get the global indices of the owned DOFs on this rank
+        dofmap = self.V.dofmap
+        local_size = dofmap.index_map.local_range[1] - dofmap.index_map.local_range[0]
+        owned_local_indices = np.arange(local_size, dtype=np.int32)
+        owned_global_indices = dofmap.index_map.local_to_global(owned_local_indices)
+        
+        # Get all local DOFs (owned + ghosts) and their corresponding global indices
+        all_local_indices = np.arange(dofmap.index_map.size_local, dtype=np.int32)
+        all_global_indices = dofmap.index_map.local_to_global(all_local_indices)
+
+        # Get the coordinates for all local DOFs
+        all_local_coords = self.V.tabulate_dof_coordinates()[:, 0]
+        
+        # Get the values for the owned DOFs using their global indices
+        # This is a safe way to get values regardless of local indexing.
+        owned_values = u.x.petsc_vec.getValues(owned_global_indices.astype(np.int32))
+        
+        # Now, find the coordinates that correspond to the owned DOFs
+        owned_coords = all_local_coords[np.isin(all_global_indices, owned_global_indices)]
+
+        # Combine the coordinates and values into a single array
+        local_data = np.vstack((owned_coords, owned_values)).T
+
+        if rank == 0:
+            all_data = comm.gather(local_data, root=0)
+            global_data = np.concatenate(all_data)
+            sorted_data = global_data[np.argsort(global_data[:, 0])]
+            
+            n_dofs = sorted_data.shape[0]
+            n_components = self.V.dofmap.index_map_bs
+            solution_components = sorted_data[:, 1].reshape(n_dofs // n_components, n_components)
+
+            self.last_solution["area"] = solution_components[:, 0]
+            self.last_solution["flux"] = solution_components[:, 1]
+    def add_solution(self, u: fem.Function):
+        """
+        Stores the vessel solution by gathering data on rank 0,
+        correctly handling distributed DOFs and ghost cells.
+        """
+        comm = self.mesh.comm
+        rank = comm.Get_rank()
+
+        local_size = self.V.dofmap.index_map.local_range[1] - self.V.dofmap.index_map.local_range[0]
+        owned_dof_indices_local = np.arange(local_size, dtype=np.int32)
+        owned_dof_indices_global = self.V.dofmap.index_map.local_to_global(owned_dof_indices_local)
+
+
+
+        # Get the local DOFs and their physical coordinates (including ghosts)
+        all_local_coords = self.V.tabulate_dof_coordinates()[:, 0]
+        print(f"rank {rank}: ",all_local_coords, flush=True)
+        
+        # Get the local DOF indices that are owned by this rank.
+        # We use a numpy array to match the PETSc API.
+        print(f"rank {rank}: ",self.V.dofmap.index_map.local_range, flush=True)
+        print(f"rank {rank}: ",owned_dof_indices_local, flush=True)
+        # Get the values for the owned DOFs
+        owned_values = u.x.petsc_vec.getValues(owned_dof_indices_global.astype(np.int32))
+        
+        # Get the coordinates for the owned DOFs by using the local-to-global mapping
+        # to find which local coordinates correspond to the owned DOFs
+        # This ensures owned_coords and owned_values have the same size.
+        owned_coords = all_local_coords[owned_dof_indices_local]
+
+        # Combine the local coordinates and solution values into a single array.
+        local_data = np.vstack((owned_coords, owned_values)).T
+
+        if rank == 0:
+            # Gather the data from all ranks.
+            all_data = comm.gather(local_data, root=0)
+            
+            # Concatenate all gathered arrays into a single global array.
+            global_data = np.concatenate(all_data)
+            
+            # Sort the data based on the x-coordinate to get a physically ordered solution.
+            sorted_data = global_data[np.argsort(global_data[:, 0])]
+            
+            # Separate into area and flux vectors.
+            n_dofs = sorted_data.shape[0]
+            n_components = self.V.dofmap.index_map_bs
+            solution_components = sorted_data[:, 1].reshape(n_dofs // n_components, n_components)
+
+            self.last_solution["area"] = solution_components[:, 0]
+            self.last_solution["flux"] = solution_components[:, 1]
+
+    def add_solution3(self, u: fem.Function, save_all: bool = True, debug: bool = True):
+        """
+        Store the vessel solution, with rank 0 holding the full global vector
+        for inflow/outflow BC computation.
+        """
+        local_range = self.V.dofmap.index_map.local_range
+        x = self.mesh.geometry.x[local_range[0]:local_range[1], 0]  # 1D mesh, take first column
+        print(x, flush=True)
+        comm = self.mesh.comm
+        local_coords = x.copy()
+        all_coords = comm.allgather(local_coords)
+        global_coords = np.concatenate(all_coords)
+
+        with u.x.petsc_vec.localForm() as lf:
+            owned_array = lf.array.copy()
+        vec = u.x.petsc_vec
+        size = vec.getSize()
+
+        if self.id == "1" and debug:
+            # print("----- add_solution called -----")
+            print(f"Owned array on rank {self.mesh.comm.Get_rank()}: {owned_array}", flush=True)
+
+
+        start, end = vec.getOwnershipRange()
+        local_n = end - start
+        # --- Gather lengths to compute displacements ---
+        owned_values = vec.getValues(range(start, end))
+        all_lengths = comm.allgather(local_n)
+        displs = np.cumsum([0] + all_lengths[:-1])
+        global_array = None
+        if comm.rank == 0:
+            global_array = np.empty(sum(all_lengths), dtype=owned_values.dtype)
+            
+        # Gather all owned values to rank 0
+        comm.Gatherv(sendbuf=owned_values,
+                recvbuf=(global_array, all_lengths, displs, MPI.DOUBLE),
+                root=0)
+    
+        if comm.rank == 0:
+            n_total = len(global_array) // 2
+            self.last_solution["area"] = global_array[0::2].copy()
+            self.last_solution["flux"] = global_array[1::2].copy()
+
+        # if comm.rank == 0:
+        #     # n = size // 2  # assuming 2-component system
+        #     # self.last_solution["area"] = global_array[0::2].copy()
+        #     # self.last_solution["flux"] = global_array[1::2].copy()
+        #     # Sort by coordinates
+        #     print(global_array.size, flush=True)
+        #     n_nodes = int(global_array.size / 2)
+        #     global_array_reshaped = global_array.reshape(n_nodes, 2)
+        #     sort_idx = np.argsort(global_coords)
+        #     print(f"Sort idx: {sort_idx}", flush=True)
+            
+        #     sorted_global_array = global_array_reshaped[sort_idx, 0]  # area
+        #     sorted_global_array_flux = global_array_reshaped[sort_idx, 1]  # flux
+        #     self.last_solution["area"] = sorted_global_array.copy()
+        #     self.last_solution["flux"] = sorted_global_array_flux.copy()
+        
+        # if comm.rank == 0:
+        #     # The number of nodes is half the global array size
+        #     n_nodes = global_array.size // 2
+        #     global_array_reshaped = global_array.reshape(n_nodes, 2)
+        #     # Get the coordinates for these nodes
+        #     # Gather all node coordinates from all ranks
+        #     all_coords = comm.allgather(self.mesh.geometry.x[:, 0])
+        #     global_coords = np.concatenate(all_coords)
+        #     # Remove duplicates and sort
+        #     global_coords_unique = np.unique(global_coords)
+        #     # Now sort the solution by coordinates
+        #     sort_idx = np.argsort(global_coords_unique)
+        #     sorted_area = global_array_reshaped[sort_idx, 0]
+        #     sorted_flux = global_array_reshaped[sort_idx, 1]
+        #     self.last_solution["area"] = sorted_area.copy()
+        #     self.last_solution["flux"] = sorted_flux.copy()
+        # Optionally save all timesteps
+        if save_all and comm.rank == 0:
+            if "area_all" not in self.solutions:
+                self.solutions["area_all"] = []
+                self.solutions["flux_all"] = []
+            if comm.rank == 0:
+                self.solutions["area_all"].append(self.last_solution["area"].copy())
+                self.solutions["flux_all"].append(self.last_solution["flux"].copy())
+
+    def add_solution2(self, u: fem.Function, save_all: bool = True):
         assert u.ufl_shape == (2, ), "Solution must be a vector of size 2."
 
         comm = self.mesh.comm

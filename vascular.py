@@ -23,6 +23,79 @@ class VascularSolver:
     def set_system(self, system: VesselSystem):
         self.system = system
         self.system.setup(h=self.h, dt=self.dt)
+    
+    def solve(self, T: float, gamma_bif: float = 2.0, debug: bool = True):
+        """
+        Time-march for t from 0 → T, in steps of self.dt. Only `solve_interior`
+        is MPI-parallel; all boundary logic happens on rank 0 and then is Bcast.
+        """
+
+        if debug and rank == 0:
+            print("----- Starting solve function ----")
+        n_steps = int(T / self.dt)
+
+        # Only rank 0 gets a tqdm bar
+        if rank == 0:
+            iterator = tqdm(range(n_steps), desc="Solving Vascular System", unit="step")
+        else:
+            iterator = range(n_steps)
+
+        t = 0.0
+        i = 0
+
+        save_on = n_steps // int(T / 1e-3) # Save every 1 ms
+
+        for _ in iterator:
+            if debug and rank == 0:
+                print(f"\n------Time step {i}, Time {t:.6f}-----------------------", flush=True)
+            i += 1
+            t += self.dt
+            if i >= 5 and debug:
+                break
+
+            store_solution = (i % save_on == 0)
+
+
+            # 1) EVERY RANK does each vessel's interior solve (parallel PETSc calls)
+            for vessel in self.system.vessels.values():
+                if rank == 0 and vessel.id == "1" and debug:
+                    print(f"Area: ({len(vessel.last_solution['area'])})", flush=True)#vessel.solutions['area'].shape
+                    print(vessel.last_solution['area'], flush=True)
+                    print(f"Flux: ({len(vessel.last_solution['flux'])})", flush=True)#vessel.solutions['flux'].shape
+                    print(vessel.last_solution['flux'], flush=True)
+                if vessel.id == "1":
+                    print(f"----Time step {i}, Time {t:.6f}---- now comes solve_interior for vessel{vessel.id} on rank {rank}", flush=True)
+                self.solve_interior(vessel, store_solution=store_solution)
+                vessel.mesh.comm.Barrier()
+                # in vessel.solutions["area"] and ["flux"] on every rank.
+
+
+
+            # 2) Sync so that all ranks finish interior solves before BC logic:
+            comm.Barrier()
+
+            # 3) On rank 0 only: compute inflow & outflow BC for each vessel
+            if rank == 0:
+
+                for vessel in self.system.vessels.values():
+                    self.solve_inflow_BC(vessel, t)
+                    self.solve_outflow_BC(vessel)
+
+                # 4) Then on rank 0 run the bifurcation coupling
+                self.solve_branches(gamma=gamma_bif)
+
+            # 5) Broadcast the newly computed LB/RB from rank 0 → all ranks
+            self._broadcast_updated_BCs2()
+
+            # 6) EVERY RANK now applies the BCs to its local DOLFINx objects:
+            for vessel in self.system.vessels.values():
+                vessel.set_boundary_conditions()
+
+            comm.Barrier()  # Ensure all ranks are synchronized before the next step
+
+        # Optional final sync:
+        comm.Barrier()
+        print("\n\n\n\n", flush=True)
 
     @profile_this
     def solve_interior(self, vessel: BloodVessel, store_solution: bool = True):
@@ -267,59 +340,36 @@ class VascularSolver:
 
         comm.Barrier()
 
-    def solve(self, T: float, gamma_bif: float = 2.0):
-        """
-        Time-march for t from 0 → T, in steps of self.dt. Only `solve_interior`
-        is MPI-parallel; all boundary logic happens on rank 0 and then is Bcast.
-        """
-        n_steps = int(T / self.dt)
+    def _broadcast_updated_BCs2(self):
 
-        # Only rank 0 gets a tqdm bar
-        if rank == 0:
-            iterator = tqdm(range(n_steps), desc="Solving Vascular System", unit="step")
-        else:
-            iterator = range(n_steps)
+        for vessel_id, vessel in self.system.vessels.items():
+            # Prepare two 2‐entry buffers for LB and RB
+            lb_buf = np.zeros(2, dtype=default_scalar_type)
+            rb_buf = np.zeros(2, dtype=default_scalar_type)
 
-        t = 0.0
-        i = 0
-
-        save_on = n_steps // int(T / 1e-3) # Save every 1 ms
-
-        for _ in iterator:
-            i += 1
-            t += self.dt
-
-            store_solution = (i % save_on == 0)
-
-            # 1) EVERY RANK does each vessel's interior solve (parallel PETSc calls)
-            for vessel in self.system.vessels.values():
-                self.solve_interior(vessel, store_solution=store_solution)
-                # At this point, vessel.add_solution(u) has stored a global array
-                # in vessel.solutions["area"] and ["flux"] on every rank.
-
-            # 2) Sync so that all ranks finish interior solves before BC logic:
-            comm.Barrier()
-
-            # 3) On rank 0 only: compute inflow & outflow BC for each vessel
             if rank == 0:
-                for vessel in self.system.vessels.values():
-                    self.solve_inflow_BC(vessel, t)
-                    self.solve_outflow_BC(vessel)
+                # On rank 0, load the “true” BCs into the buffers.
+                if hasattr(vessel, "LB"):
+                    lb_buf[:] = vessel.LB
+                if hasattr(vessel, "RB"):
+                    rb_buf[:] = vessel.RB
 
-                # 4) Then on rank 0 run the bifurcation coupling
-                self.solve_branches(gamma=gamma_bif)
+            # Broadcast from rank 0 → all ranks:
+            comm.Bcast(lb_buf, root=0)
+            comm.Bcast(rb_buf, root=0)
+            # print('lb_buf on rank', rank)
+            # print(lb_buf)
 
-            # 5) Broadcast the newly computed LB/RB from rank 0 → all ranks
-            self._broadcast_updated_BCs()
-
-            # 6) EVERY RANK now applies the BCs to its local DOLFINx objects:
-            for vessel in self.system.vessels.values():
-                vessel.set_boundary_conditions()
-
-            comm.Barrier()  # Ensure all ranks are synchronized before the next step
-
-        # Optional final sync:
+            # print('rb_buf on rank', rank)
+            # print(rb_buf)
+            # print('---\n---\n')
+            # Overwrite each vessel’s LB/RB on every rank:
+            vessel.LB = lb_buf.copy()
+            vessel.RB = rb_buf.copy()
+            
         comm.Barrier()
+
+
 
     def create_results_directory(self, mode: Literal["main", "test"] = "main"):
         path = os.path.join("results")
