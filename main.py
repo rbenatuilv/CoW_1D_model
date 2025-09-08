@@ -7,7 +7,7 @@ from typing import Literal
 
 def main(T: float = 1.0, mode: Literal["main", "test"] = "main", method: Literal["CG", "DG"] = "CG"):
 
-    h = 2 * 0.03125
+    h = 3 * 0.03125
     dt = 1 * 1e-5
 
     data_loader = VascularDataLoader(mode=mode)

@@ -21,6 +21,8 @@ class ElasticDGVessel(ElasticVessel):
         self.LB_fem = None
         self.RB_fem = None
 
+        self.diff_const = 10.0
+
     def create_mesh(self, h: float):
         n = int(self.L / h)
         self.mesh = mesh.create_interval(MPI.COMM_WORLD, n, (0, self.L))
@@ -34,7 +36,7 @@ class ElasticDGVessel(ElasticVessel):
         num_facets = facet_imap.size_local + facet_imap.num_ghosts
 
         indices = np.arange(num_facets)
-        values = np.zeros(num_facets, dtype=np.intc)
+        values = np.zeros(num_facets)
 
         left_facets = mesh.locate_entities_boundary(self.mesh, tdim - 1, lambda x: np.isclose(x[0], 0.0))
         right_facets = mesh.locate_entities_boundary(self.mesh, tdim - 1, lambda x: np.isclose(x[0], self.L))
@@ -49,7 +51,7 @@ class ElasticDGVessel(ElasticVessel):
         if self.mesh is None:
             raise ValueError("Mesh not created. Call create_mesh() first.")
         
-        elem = element("DG", self.mesh.topology.cell_name(), 1, shape=(2, ))
+        elem = element("DG", self.mesh.topology.cell_name(), 0, shape=(2, ))
         self.V = fem.functionspace(self.mesh, elem)
 
         self.u = fem.Function(self.V)  # Current time step solution
@@ -64,6 +66,23 @@ class ElasticDGVessel(ElasticVessel):
         
         self.u_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
         self.v_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
+
+        comm = MPI.COMM_WORLD
+
+        u = self.u_n
+
+        # 1) Extract local solution from the function without ghosts
+        uA_loc = u.sub(0).collapse().x.array    # area component
+        uQ_loc = u.sub(1).collapse().x.array    # flux component
+        local_sol = np.stack([uA_loc, uQ_loc], axis=-1)  # shape (n_local, 2)
+
+        # 2) Gather all local solutions across processes
+        all_sols = comm.allgather(local_sol)   # returns array list [(n1,2), (n2,2), ...]
+
+        # 3) Concatenate all local solutions into a global solution
+        global_sol = np.vstack(all_sols)        # shape (n_total, 2)
+
+        self.last_sol = global_sol
 
     def max_eigval(self, u: fem.Function):
         eigval1 = self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
@@ -80,7 +99,7 @@ class ElasticDGVessel(ElasticVessel):
         # Lax-Friedrichs numerical flux
         flux_avg = ufl.avg(self.F(u)) # type: ignore
         jump = ufl.jump(u)
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
+        return flux_avg - 0.5 * self.diff_const * lambda_max * jump # type: ignore
 
     def LxF_bound_L(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u), self.max_eigval(self.LB_fem))
@@ -88,29 +107,29 @@ class ElasticDGVessel(ElasticVessel):
         # Lax-Friedrichs numerical flux at left boundary
         flux_avg = 0.5 * (self.F(u) + self.F(self.LB_fem)) # type: ignore
         jump = u - self.LB_fem
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
-    
+        return flux_avg - 0.5 * self.diff_const * lambda_max * jump # type: ignore
+
     def LxF_bound_R(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u), self.max_eigval(self.RB_fem))
 
         # Lax-Friedrichs numerical flux at right boundary
         flux_avg = 0.5 * (self.F(u) + self.F(self.RB_fem)) # type: ignore
         jump = self.RB_fem - u
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
+        return flux_avg - 0.5 * self.diff_const * lambda_max * jump # type: ignore
     
     def dU_dz(self, u: np.ndarray):
         area = u[:, 0]
         flux = u[:, 1]
 
-        h = self.L / (len(area) // 2)
+        h = self.L / float(len(area) // 2)
 
         dA = []
-        for i in range(0, len(area), 2):
+        for i in range(0, len(area)-1, 2):
             derv = (area[i+1] - area[i]) / h
             dA.append(derv)
 
         dQ = []
-        for i in range(0, len(flux), 2):
+        for i in range(0, len(flux)-1, 2):
             derv = (flux[i+1] - flux[i]) / h
             dQ.append(derv)
         
@@ -121,9 +140,9 @@ class ElasticDGVessel(ElasticVessel):
 
         L = -ufl.inner(self.B(u), v) * ufl.dx # type: ignore
         L += ufl.inner(self.F(u), v.dx(0)) * ufl.dx # type: ignore
-        L += ufl.inner(self.LxF(u), ufl.jump(v)) * ufl.dS # type: ignore
+        L += ufl.inner(self.LxF(u), (ufl.jump(v))) * ufl.dS # type: ignore
         L += ufl.inner(self.LxF_bound_L(u), v) * ds(1) # type: ignore
-        L += ufl.inner(self.LxF_bound_R(u), v) * ds(2) # type: ignore
+        L += ufl.inner(self.LxF_bound_R(u), -v) * ds(2) # type: ignore
 
         return L
 
@@ -151,8 +170,8 @@ class ElasticDGVessel(ElasticVessel):
 
     def update_BCs(self, LB: Optional[np.ndarray] = None, RB: Optional[np.ndarray] = None):
         # Ensure we have valid boundary values
-        left_bc = LB if LB is not None else getattr(self, 'LB', None)
-        right_bc = RB if RB is not None else getattr(self, 'RB', None)
+        left_bc = LB if LB is not None else self.LB
+        right_bc = RB if RB is not None else self.RB
         
         if left_bc is None or right_bc is None:
             raise ValueError("Boundary conditions not properly initialized")
@@ -258,7 +277,7 @@ class ElasticDGVessel(ElasticVessel):
 
         self.last_sol = global_sol
 
-        if (rank == 0) and (t - self.last_saved_time) >= 0.001:
+        if (rank == 0) and (t - self.last_saved_time) >= 1e-5:
             self.solutions["t"].append(t)
             self.solutions["A"].append(global_sol[:, 0])
             self.solutions["Q"].append(global_sol[:, 1])

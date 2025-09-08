@@ -27,7 +27,7 @@ class BloodVessel(Blood):
     POISSON_RATIO = 0.5
 
     def __init__(
-        self, id: int, length: float, initial_area: float,
+        self, id: str, length: float, initial_area: float,
         beta_coeff: float,
         left_bound: Literal["inflow", "outflow", "branch"] = "inflow",
         right_bound: Literal["inflow", "outflow", "branch"] = "outflow"

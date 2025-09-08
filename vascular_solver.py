@@ -54,7 +54,7 @@ class VascularSolver:
 
         comm.Barrier()
 
-    def solve(self, t_end: float):
+    def solve(self, t_end: float, debug: bool = False):
         comm = MPI.COMM_WORLD
         rank = comm.rank
 
@@ -73,6 +73,9 @@ class VascularSolver:
                 vessel.solve()
                 vessel.add_solution(t)
 
+                if debug:
+                    pass # log the solution
+
             comm.Barrier()
 
             if rank == 0:
@@ -90,6 +93,9 @@ class VascularSolver:
 
             for vessel in self.network.vessels.values():
                 vessel.update_BCs()
+                
+                if debug:
+                    pass # log the BCs
 
             comm.Barrier()
 

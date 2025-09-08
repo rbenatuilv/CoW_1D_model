@@ -71,6 +71,23 @@ class ElasticCGVessel(ElasticVessel):
         
         self.u_n.interpolate(lambda x: np.tile(self.LB, (x.shape[1], 1)).T)
 
+        comm = MPI.COMM_WORLD
+
+        u = self.u_n
+
+        # 1) Extract local solution from the function without ghosts
+        uA_loc = u.sub(0).collapse().x.array    # area component
+        uQ_loc = u.sub(1).collapse().x.array    # flux component
+        local_sol = np.stack([uA_loc, uQ_loc], axis=-1)  # shape (n_local, 2)
+
+        # 2) Gather all local solutions across processes
+        all_sols = comm.allgather(local_sol)   # returns array list [(n1,2), (n2,2), ...]
+
+        # 3) Concatenate all local solutions into a global solution
+        global_sol = np.vstack(all_sols)        # shape (n_total, 2)
+
+        self.last_sol = global_sol
+
     def set_variational_problem(self, dt: float):
         if self.u_n is None:
             raise ValueError("Initial condition not set. Call set_initial_condition() first.")

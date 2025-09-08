@@ -186,7 +186,7 @@ class ElasticBCSolver:
 
     def solve_branch(
         self, vessels: list[ElasticVessel], branch: dict, dt: float, 
-        tol: float = 1e-6, max_iter: int = 20
+        tol: float = 1e-5, max_iter: int = 100
     ):
         N, J, U0 = self.create_newton(vessels, branch, dt)
 
@@ -212,12 +212,9 @@ class ElasticBCSolver:
                 raise RuntimeError("Branch Newton solver diverged (NaN or Inf encountered)")
             else:
                 raise RuntimeError(f"Branch Newton solver failed to converge within {max_iter} iterations")
-        
+
         for i, vessel in enumerate(vessels):
             if branch["positions"][i] == "left":
                 vessel.LB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type) # type: ignore
             else:
                 vessel.RB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type) # type: ignore 
-
-        
-
