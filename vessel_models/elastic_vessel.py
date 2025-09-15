@@ -73,11 +73,17 @@ class ElasticVessel(BloodVessel):
     def CCL(self, dt: float):
         uL = self.LB
         dU_dz_L = self.dU_dz(self.last_sol)[0] # type: ignore
+        # print(f"dU_dz_L for vessel {self.id}: {dU_dz_L}")
+        # input("Press Enter to continue...")
+
         return self.CC(uL, dU_dz_L, dt)
     
     def CCR(self, dt: float):
         uR = self.RB
         dU_dz_R = self.dU_dz(self.last_sol)[-1] # type: ignore
+        # print(f"dU_dz_R for vessel {self.id}: {dU_dz_R}")
+        # input("Press Enter to continue...")
+
         return self.CC(uR, dU_dz_R, dt)
 
     def f_branch(self, U: np.ndarray, theta: float, gamma: float = 2.0):
@@ -125,6 +131,12 @@ class ElasticVessel(BloodVessel):
     def dU_dz(self, u: np.ndarray):
         area = u[:, 0]
         flux = u[:, 1]
+
+        # print("Last solution area in dU_dz:", area)
+        # input("Press Enter to continue...")
+
+        # print("Last solution flux in dU_dz:", flux)
+        # input("Press Enter to continue...")
 
         # Assume uniform grid along z:
         z = np.linspace(0, self.L, len(area))

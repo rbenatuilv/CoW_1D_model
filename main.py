@@ -2,13 +2,13 @@ from vascular_solver import VascularSolver
 from dataload import VascularDataLoader
 from vascular_net import VascularNetwork
 
-
 from typing import Literal
+
 
 def main(T: float = 1.0, mode: Literal["main", "test"] = "main", method: Literal["CG", "DG"] = "CG"):
 
-    h = 3 * 0.03125
-    dt = 1 * 1e-5
+    h = 2 * 0.03125
+    dt = 0.5 * 1e-5
 
     data_loader = VascularDataLoader(mode=mode)
     vessels_data, bif_data, inflows = data_loader.load()

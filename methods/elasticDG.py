@@ -21,7 +21,7 @@ class ElasticDGVessel(ElasticVessel):
         self.LB_fem = None
         self.RB_fem = None
 
-        self.diff_const = 10.0
+        self.diff_const = 12.53125
 
     def create_mesh(self, h: float):
         n = int(self.L / h)
@@ -88,10 +88,12 @@ class ElasticDGVessel(ElasticVessel):
         eigval1 = self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
         eigval2 = self.alpha * (u[1] / u[0]) - self.c_alpha_ufl(u)
 
-        return ufl.max_value(
-            ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
-            ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
-        )
+        return 1000
+
+        # return ufl.max_value(
+        #     ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
+        #     ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
+        # )
 
     def LxF(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u('+')), self.max_eigval(u('-')))

@@ -11,6 +11,9 @@ from typing import Optional
 from vessel_models.elastic_vessel import ElasticVessel
 
 
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+
 class ElasticCGVessel(ElasticVessel):
 
     method_type = "CG"
@@ -34,10 +37,9 @@ class ElasticCGVessel(ElasticVessel):
         self.solver = None
 
     def create_mesh(self, h: float):
-        length = self.L
-        n = int(length / h)
+        n = int(self.L / h)
 
-        self.mesh = mesh.create_interval(MPI.COMM_WORLD, n, (0, length))
+        self.mesh = mesh.create_interval(MPI.COMM_WORLD, n, (0, self.L))
 
     def create_fem_space(self):
         if self.mesh is None:
@@ -57,8 +59,8 @@ class ElasticCGVessel(ElasticVessel):
         self.dofs_R = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], self.L))
 
     def update_BCs(self, LB: Optional[np.ndarray] = None, RB: Optional[np.ndarray] = None):
-        self.LB = LB if LB is not None else self.LB
-        self.RB = RB if RB is not None else self.RB
+        # self.LB = LB if LB is not None else self.LB
+        # self.RB = RB if RB is not None else self.RB
 
         bc_L = fem.dirichletbc(self.LB, self.dofs_L, self.V)
         bc_R = fem.dirichletbc(self.RB, self.dofs_R, self.V)
@@ -150,8 +152,13 @@ class ElasticCGVessel(ElasticVessel):
         self.u.x.scatter_forward()
         self.u_n.x.array[:] = self.u.x.array[:]
 
+        # print(f"Solution on rank {rank} for vessel {self.id}: {self.u.x.array}")
+        # input("Press Enter to continue...")
+
         if np.any(np.isnan(self.u.x.array)):
             raise ValueError(f"NaN values encountered in the solution of vessel ID {self.id}.")
+
+        
         
     def add_solution(self, t: float):
         if self.mesh is None or self.V is None:
@@ -176,7 +183,7 @@ class ElasticCGVessel(ElasticVessel):
         # 3) Concatenate all local solutions into a global solution
         global_sol = np.vstack(all_sols)        # shape (n_total, 2)
 
-        self.last_sol = global_sol
+        self.last_sol = global_sol.copy()
 
         if (rank == 0) and (t - self.last_saved_time) >= 0.001:
             self.solutions["t"].append(t)

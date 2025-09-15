@@ -44,8 +44,8 @@ class BloodVessel(Blood):
         self.LB_type = left_bound
         self.RB_type = right_bound
 
-        self.LB = np.array([self.A0, 0], dtype=default_scalar_type)
-        self.RB = np.array([self.A0, 0], dtype=default_scalar_type)
+        self.LB = np.array([self.A0, 0.0], dtype=default_scalar_type)
+        self.RB = np.array([self.A0, 0.0], dtype=default_scalar_type)
 
         self.inflow = None  # To be set later if needed
 

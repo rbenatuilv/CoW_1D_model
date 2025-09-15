@@ -32,7 +32,7 @@ class VascularSolver:
         comm = MPI.COMM_WORLD
         rank = comm.rank
 
-        for vessel_id, vessel in self.network.vessels.items():
+        for vessel in self.network.vessels.values():
             # Prepare two 2‐entry buffers for LB and RB
             lb_buf = np.zeros(2, dtype=default_scalar_type)
             rb_buf = np.zeros(2, dtype=default_scalar_type)
