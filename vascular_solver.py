@@ -10,15 +10,17 @@ from boundary_solver.elasticBC import ElasticBCSolver
 
 
 class VascularSolver:
-    def __init__(self, network: VascularNetwork, model: str = "Elastic", method: str = "CG"):
+    def __init__(self, network: VascularNetwork, model: str = "Elastic", method: str = "CG", num_flux: str = "HLL", name: str | None = None):
         self.network = network
         self.model = model
         self.method = method
+        self.num_flux = num_flux
+        self.name = name
 
         self.bc_solver = ElasticBCSolver()
 
     def setup(self, h: float, dt: float):
-        self.network.setup_network(h=h, dt=dt, model=self.model, method=self.method)
+        self.network.setup_network(h=h, dt=dt, model=self.model, method=self.method, num_flux=self.num_flux)
         self.dt = dt
         self.h = h
 
@@ -54,7 +56,7 @@ class VascularSolver:
 
         comm.Barrier()
 
-    def solve(self, t_end: float, debug: bool = False):
+    def solve(self, t_end: float):
         comm = MPI.COMM_WORLD
         rank = comm.rank
 
@@ -73,9 +75,6 @@ class VascularSolver:
                 vessel.solve()
                 vessel.add_solution(t)
 
-                if debug:
-                    pass # log the solution
-
             comm.Barrier()
 
             if rank == 0:
@@ -93,9 +92,7 @@ class VascularSolver:
 
             for vessel in self.network.vessels.values():
                 vessel.update_BCs()
-                
-                if debug:
-                    pass # log the BCs
+            
 
             comm.Barrier()
 
@@ -113,6 +110,14 @@ class VascularSolver:
         path = os.path.join(path, mode)
         if not os.path.exists(path):
             os.mkdir(path)
+
+        name = f"{self.name}_h{self.h}_dt{self.dt}" if self.name is not None else f"{self.model}_{self.method}_h{self.h}_dt{self.dt}"
+
+        path = os.path.join(path, name)
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        self.results_path = path
 
         plots_path = os.path.join(path, "plots")
         if not os.path.exists(plots_path):
@@ -144,7 +149,8 @@ class VascularSolver:
 
         self.create_results_directory(mode)
 
-        path = os.path.join("results", mode, "plots")
+        path = os.path.join(self.results_path, "plots")
+
         area_path = os.path.join(path, "area")
         flux_path = os.path.join(path, "flux")
 
@@ -152,7 +158,7 @@ class VascularSolver:
             vessel.save_middlepoint_plot("A", os.path.join(area_path, f"vessel_{vessel.id}.png"))
             vessel.save_middlepoint_plot("Q", os.path.join(flux_path, f"vessel_{vessel.id}.png"))
 
-        print(f"Plots saved to {path}")
+        print(f"Plots saved to {self.results_path}")
 
     def save_solutions(self, mode: Literal["main", "test"] = "main"):
         """
@@ -171,7 +177,7 @@ class VascularSolver:
         
         self.create_results_directory(mode)
 
-        path = os.path.join("results", mode, "data")
+        path = os.path.join(self.results_path, "data")
 
         for vessel in tqdm(self.network.vessels.values(), desc="Saving Solutions", unit="vessel"):
             vessel.save_solution(path)

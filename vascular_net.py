@@ -9,13 +9,13 @@ class VascularNetwork:
 
         self.vessels = {}
 
-    def setup_network(self, h: float, dt: float, model: str = "Elastic", method: str = "CG"):
+    def setup_network(self, h: float, dt: float, model: str = "Elastic", method: str = "CG", num_flux: str = "HLL"):
         for id, params in self.vessels_data.items():
             if model == "Elastic":
                 if method == "CG":
                     vessel = ElasticCGVessel(id=id, **params)
                 elif method == "DG":
-                    vessel = ElasticDGVessel(id=id, **params)
+                    vessel = ElasticDGVessel(id=id, num_flux=num_flux, **params)
 
                 else:
                     raise ValueError(f"Method {method} not recognized for model {model}.")

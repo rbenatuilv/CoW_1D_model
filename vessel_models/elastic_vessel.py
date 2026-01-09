@@ -31,6 +31,12 @@ class ElasticVessel(BloodVessel):
     
     def c_alpha_ufl(self, u: fem.Function):
         return ufl.sqrt(self.c2(u) + self.alpha * (self.alpha - 1) * (u[1] / u[0]) ** 2)
+    
+    def lambda1(self, u: fem.Function):
+        return self.alpha * (u[1] / u[0]) - self.c_alpha_ufl(u)
+    
+    def lambda2(self, u: fem.Function):
+        return self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
 
     def c2(self, u: fem.Function):
         return (self.beta / (2 * self.rho * self.A0)) * u[0] ** 0.5
@@ -88,13 +94,14 @@ class ElasticVessel(BloodVessel):
 
     def f_branch(self, U: np.ndarray, theta: float, gamma: float = 2.0):
         a, q = U
-        return np.sign(q) * gamma * (q / a) ** 2 * np.sqrt(2 * (1 - np.cos(theta)))
+        return gamma * q * np.abs(q) / (a ** 2) * np.sqrt(2 * (1 - np.cos(theta)))
     
     def df_dU(self, U: np.ndarray, theta: float, gamma: float = 2.0):
         a, q = U
-
-        dfdU_a = -2 * gamma * ((q ** 2) / (a ** 3)) * np.sqrt(2 * (1 - np.cos(theta)))
-        dfdU_q = 2 * gamma * q / a ** 2 * np.sqrt(2 * (1 - np.cos(theta)))
+        
+        factor = np.sqrt(2 * (1 - np.cos(theta)))
+        dfdU_a = -2 * gamma * q * np.abs(q) / (a ** 3) * factor
+        dfdU_q = 2 * gamma * np.abs(q) / (a ** 2) * factor
 
         return np.array([dfdU_a, dfdU_q])
 
@@ -129,19 +136,4 @@ class ElasticVessel(BloodVessel):
         return np.array([dP_da, dP_dq])
 
     def dU_dz(self, u: np.ndarray):
-        area = u[:, 0]
-        flux = u[:, 1]
-
-        # print("Last solution area in dU_dz:", area)
-        # input("Press Enter to continue...")
-
-        # print("Last solution flux in dU_dz:", flux)
-        # input("Press Enter to continue...")
-
-        # Assume uniform grid along z:
-        z = np.linspace(0, self.L, len(area))
-
-        dA_dz = np.gradient(area, z)
-        dQ_dz = np.gradient(flux, z)
-
-        return np.stack([dA_dz, dQ_dz], axis=1)  # shape (n, 2)
+        raise NotImplementedError("This method should be implemented in the numerical method class.")

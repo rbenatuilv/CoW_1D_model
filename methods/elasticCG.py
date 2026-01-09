@@ -136,6 +136,24 @@ class ElasticCGVessel(ElasticVessel):
         self.h = h
         self.dt = dt
 
+    def dU_dz(self, u: np.ndarray) -> np.ndarray:
+        area = u[:, 0]
+        flux = u[:, 1]
+
+        # print("Last solution area in dU_dz:", area)
+        # input("Press Enter to continue...")
+
+        # print("Last solution flux in dU_dz:", flux)
+        # input("Press Enter to continue...")
+
+        # Assume uniform grid along z:
+        z = np.linspace(0, self.L, len(area))
+
+        dA_dz = np.gradient(area, z)
+        dQ_dz = np.gradient(flux, z)
+
+        return np.stack([dA_dz, dQ_dz], axis=1)  # shape (n, 2)
+
     def solve(self):
         if self.solver is None or self.rhs is None or self.u is None or self.u_n is None:
             raise ValueError("Solver not assembled. Call assemble_solver() first.")

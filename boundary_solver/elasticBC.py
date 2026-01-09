@@ -23,19 +23,15 @@ class ElasticBCSolver:
         
         du_dz = vessel.dU_dz(sol)
 
-        check = "RB"
-
         if vessel.LB_type == "inflow":
             uL = sol[0]
             du_dz_L = du_dz[0]
 
             q = vessel.inflow(t) * vessel.A0
             i2 = vessel.I2(uL)
-            A = (i2 @ vessel.CC(uL, du_dz_L, dt) - i2[1] * q) / (i2[0] + 1e-12) # JAJAJA
+            A = (i2 @ vessel.CC(uL, du_dz_L, dt) - i2[1] * q) / (i2[0])
 
             vessel.LB = np.array([A, q], dtype=default_scalar_type)
-
-            check = "LB"
 
         if vessel.RB_type == "inflow":
             uR = sol[-1]
@@ -43,12 +39,9 @@ class ElasticBCSolver:
 
             q = -vessel.inflow(t) * vessel.A0
             i1 = vessel.I1(uR)
-            A = (i1 @ vessel.CC(uR, du_dz_R, dt) - i1[1] * q) / (i1[0] + 1e-12) # JAJAJA
+            A = (i1 @ vessel.CC(uR, du_dz_R, dt) - i1[1] * q) / (i1[0])
 
             vessel.RB = np.array([A, q], dtype=default_scalar_type)
-
-        # print(f"Inflow BC on {check} at time {t:.4f} for vessel {vessel.id} on rank {rank}: A={A}, Q={q}")
-        # input("Press Enter to continue...")
 
     def solve_outflow_BC(self, vessel: ElasticVessel, dt: float):
         if "outflow" not in [vessel.LB_type, vessel.RB_type]:
@@ -60,18 +53,15 @@ class ElasticBCSolver:
         
         du_dz = vessel.dU_dz(sol)
 
-        check = "RB"
-
         if vessel.LB_type == "outflow":
             uL = sol[0]
             du_dz_L = du_dz[0]
 
             A = vessel.A0 
             i2 = vessel.I2(uL)
-            q = (i2 @ vessel.CC(uL, du_dz_L, dt) - i2[0] * A) / (i2[1] + 1e-12) # JAJAJA
+            q = (i2 @ vessel.CC(uL, du_dz_L, dt) - i2[0] * A) / (i2[1])
 
             vessel.LB = np.array([A, q], dtype=default_scalar_type)
-            check = "LB"
 
         if vessel.RB_type == "outflow":
             uR = sol[-1]
@@ -79,12 +69,9 @@ class ElasticBCSolver:
 
             A = vessel.A0
             i1 = vessel.I1(uR)
-            q = (i1 @ vessel.CC(uR, du_dz_R, dt) - i1[0] * A) / (i1[1] + 1e-12) # JAJAJA
+            q = (i1 @ vessel.CC(uR, du_dz_R, dt) - i1[0] * A) / (i1[1])
 
             vessel.RB = np.array([A, q], dtype=default_scalar_type)
-
-        # print(f"Outflow BC on {check} for vessel {vessel.id} on rank {rank}: A={A}, Q={q}")
-        # input("Press Enter to continue...")
 
     def create_newton(
         self, vessels: list[ElasticVessel], branch: dict, 
@@ -106,26 +93,6 @@ class ElasticBCSolver:
             1 if pos == "right" else -1
             for pos in branch["positions"]
         ])
-
-        # print("Creating Newton solver for branch with vessels:",
-        #       f"{v1.id} ({branch['positions'][0]}), ",
-        #       f"{v2.id} ({branch['positions'][1]}), ",
-        #       f"{v3.id} ({branch['positions'][2]}) on rank {rank}")
-        # input("Press Enter to continue...")
-
-        # print(f"i1: {i1}")
-        # print(f"i2: {i2}")
-        # print(f"i3: {i3}")
-        # input("Press Enter to continue...")
-
-        # print(f"CC1: {CC1}")
-        # print(f"CC2: {CC2}")
-        # print(f"CC3: {CC3}")
-        # input("Press Enter to continue...")
-
-        # print(f"Positions: {positions}")
-        # print(f"Angles: th2={th2}, th3={th3}")
-        # input("Press Enter to continue...")
 
         def N(U):
             u1 = U[:2]
@@ -204,22 +171,16 @@ class ElasticBCSolver:
             u_curr : current state   (shape [6])
             tol    : tolerance for convergence criterion
         """
-        # Separate area and flux components
-        A0, Q0 = u0[::2], u0[1::2]
-        A_prev, Q_prev = u_prev[::2], u_prev[1::2]
-        A_curr, Q_curr = u_curr[::2], u_curr[1::2]
-
-        # Avoid division by zero
+        # Compute relative change normalized by current values
         eps = 1e-12
-        relative_A = np.abs(A_curr - A_prev) / (np.abs(A0) + eps)
-        relative_Q = np.abs(Q_curr - Q_prev) / (np.abs(Q0) + eps)
-
-        total_error = np.sum(relative_A + relative_Q)
-        return total_error < tol
+        relative_change = np.abs(u_curr - u_prev) / (np.abs(u_curr) + eps)
+        
+        # Check if maximum relative change is below tolerance
+        return np.max(relative_change) < tol
 
     def solve_branch(
         self, vessels: list[ElasticVessel], branch: dict, dt: float, 
-        tol: float = 1e-5, max_iter: int = 100
+        tol: float = 1e-8, max_iter: int = 1000, omega: float = 1.0
     ):
         N, J, U0 = self.create_newton(vessels, branch, dt)
 
@@ -228,20 +189,23 @@ class ElasticBCSolver:
         u_curr = None  # Initialize to handle edge cases
 
         for i in range(max_iter):
+            residual = N(u_prev)
+            residual_norm = np.linalg.norm(residual)
+            
+            # Check convergence based on residual norm (primary criterion)
+            if residual_norm < tol:
+                converged = True
+                u_curr = u_prev
+                break
+            
+            delta_u = np.linalg.solve(J(u_prev), -residual)
+            u_curr = u_prev + omega * delta_u
+            
+            # Check for NaN or Inf
+            if np.isnan(u_curr).any() or np.isinf(u_curr).any():
+                raise RuntimeError("Branch Newton solver diverged (NaN or Inf encountered)")
 
-            # print(f"Branch Newton iteration {i+1} on rank {rank}")
-            # print(f"Current guess u_prev: {u_prev}")
-            # input("Press Enter to continue...")
-
-            # print("Residual N(u_prev):", N(u_prev))
-            # print("Jacobian J(u_prev):", J(u_prev))
-            # input("Press Enter to continue...")
-
-            u_curr = u_prev + np.linalg.solve(J(u_prev), -N(u_prev))
-
-            # print(f"Updated guess u_curr: {u_curr}")
-            # input("Press Enter to continue...")
-
+            # Check convergence based on relative change (secondary criterion)
             if self.branch_conv_criterion(U0, u_prev, u_curr, tol):
                 converged = True
                 break
@@ -253,17 +217,12 @@ class ElasticBCSolver:
             if u_curr is None:
                 raise RuntimeError(f"Branch Newton solver failed: max_iter={max_iter} is invalid")
             
-            if np.isnan(u_curr).any() or np.isinf(u_curr).any():
-                raise RuntimeError("Branch Newton solver diverged (NaN or Inf encountered)")
-            else:
-                raise RuntimeError(f"Branch Newton solver failed to converge within {max_iter} iterations")
+            raise RuntimeError(f"Branch Newton solver failed to converge within {max_iter} iterations. Final residual: {np.linalg.norm(N(u_curr))}")
 
         for i, vessel in enumerate(vessels):
             if branch["positions"][i] == "left":
                 vessel.LB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type) # type: ignore
-                # print(f"Updated LB for vessel {vessel.id}: {vessel.LB}")
+                
             else:
                 vessel.RB = np.array(u_curr[i*2:i*2+2], dtype=default_scalar_type) # type: ignore 
-                # print(f"Updated RB for vessel {vessel.id}: {vessel.RB}")
-
-            # input("Press Enter to continue...")
+                

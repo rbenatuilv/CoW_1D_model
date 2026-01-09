@@ -1,4 +1,5 @@
 results/
+results_*/
 __pycache__/
 venv/
 help/
