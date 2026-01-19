@@ -32,7 +32,7 @@ class VascularSolver:
         self.dt = dt
         self.system = None
 
-    def set_system(self, system: VesselSystem):
+    def set_system(self, system: VesselSystem, method: Literal["CG", "DG"] = "CG"):
         """
         Set the vascular system to be solved.
         Args:
@@ -40,7 +40,7 @@ class VascularSolver:
         """
 
         self.system = system
-        self.system.setup(h=self.h, dt=self.dt)
+        self.system.setup(h=self.h, dt=self.dt, method=method)
 
     @profile_this
     def solve_interior(self, vessel: BloodVessel, store_solution: bool = True):
@@ -50,14 +50,18 @@ class VascularSolver:
             vessel (BloodVessel): The blood vessel to be solved.
             store_solution (bool): Whether to store the solution in the vessel's solution history.
         """
-        
+
         with vessel.rhs.localForm() as loc_b:
             loc_b.set(0)
         petsc.assemble_vector(vessel.rhs, vessel.linear)
 
-        petsc.apply_lifting(vessel.rhs, [vessel.bilinear], [vessel.bcs])
-        vessel.rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        petsc.set_bc(vessel.rhs, vessel.bcs)
+        # For DG methods, don't apply boundary conditions (they're handled weakly)
+        if vessel.bcs:  # CG method - has boundary conditions
+            petsc.apply_lifting(vessel.rhs, [vessel.bilinear], [vessel.bcs])
+            vessel.rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+            petsc.set_bc(vessel.rhs, vessel.bcs)
+        else:  # DG method - no strong boundary conditions
+            vessel.rhs.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
         vessel.solver.solve(vessel.rhs, vessel.u.x.petsc_vec)
         vessel.u.x.scatter_forward()
@@ -395,7 +399,12 @@ class VascularSolver:
 
             # 6) EVERY RANK now applies the BCs to its local DOLFINx objects:
             for vessel in self.system.vessels.values():
-                vessel.set_boundary_conditions()
+                # Check if vessel uses CG or DG method
+                if vessel.bcs:  # CG method - has boundary conditions
+                    vessel.set_boundary_conditions("CG")
+                else:  # DG method - update boundary values in weak form
+                    if hasattr(vessel, 'update_dg_boundary_values'):
+                        vessel.update_dg_boundary_values()
 
             comm.Barrier()  # Ensure all ranks are synchronized before the next step
 

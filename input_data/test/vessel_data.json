@@ -1,20 +1,20 @@
 {
     "0": {
-        "longitude": 1,
+        "length": 1,
         "initial_area": 0.126,
         "beta_coeff": 0.060606e7,
         "left_bound": "inflow",
         "right_bound": "branch"
     },
     "1": {
-        "longitude": 1,
+        "length": 1,
         "initial_area": 0.126,
         "beta_coeff": 0.060606e7,
         "left_bound": "branch",
         "right_bound": "outflow"
     },
     "2": {
-        "longitude": 2,
+        "length": 2,
         "initial_area": 0.126,
         "beta_coeff": 0.060606e7,
         "left_bound": "branch",

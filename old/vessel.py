@@ -1,5 +1,6 @@
 from mpi4py import MPI
 from dolfinx import fem, mesh, default_scalar_type
+from dolfinx.mesh import locate_entities_boundary, meshtags
 from dolfinx.fem import petsc
 import ufl
 from basix.ufl import element
@@ -43,7 +44,7 @@ class BloodVessel:
     blood = Blood()
 
     def __init__(
-        self, id: int, longitude: float, initial_area: float, 
+        self, id: int, length: float, initial_area: float, 
         beta_coeff: float,
         left_bound: Literal["branch", "inflow", "outflow"] = "inflow",
         right_bound: Literal["branch", "inflow", "outflow"] = "outflow"
@@ -51,7 +52,7 @@ class BloodVessel:
         
         self.id = id
 
-        self.long = longitude
+        self.long = length
         self.A0 = initial_area 
 
         self.alpha = (self.GAMMA_PROFILE + 2) / (self.GAMMA_PROFILE + 1)
@@ -105,6 +106,31 @@ class BloodVessel:
 
         N = int(self.long / h)
         self.mesh = mesh.create_interval(MPI.COMM_WORLD, N, (0, self.long))
+        
+        # Create boundary markers for DG boundary conditions
+        # Mark left boundary as 1, right boundary as 2
+        boundaries = []
+        # Left boundary (x = 0)
+        left_facets = locate_entities_boundary(self.mesh, 0, lambda x: np.isclose(x[0], 0.0))
+        boundaries.append((1, left_facets))
+        
+        # Right boundary (x = self.long)  
+        right_facets = locate_entities_boundary(self.mesh, 0, lambda x: np.isclose(x[0], self.long))
+        boundaries.append((2, right_facets))
+        
+        # Create facet tags
+        facet_indices = []
+        facet_markers = []
+        for marker, facets in boundaries:
+            facet_indices.append(facets)
+            facet_markers.append(np.full_like(facets, marker))
+        
+        if len(facet_indices) > 0:
+            facet_indices = np.hstack(facet_indices).astype(np.int32)
+            facet_markers = np.hstack(facet_markers).astype(np.int32)
+            
+            self.facet_tags = meshtags(self.mesh, 0, facet_indices, facet_markers)
+        
 
     def create_fem_space(self, element_type: str = "Lagrange"):
         """Create a finite element function space for the blood vessel."""
@@ -126,16 +152,25 @@ class BloodVessel:
         self.dofs_L = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], 0.0))
         self.dofs_R = fem.locate_dofs_geometrical(self.V, lambda x: np.isclose(x[0], self.long))
 
-    def set_boundary_conditions(self):
+    def set_boundary_conditions(self, method: Literal["CG", "DG"] = "CG"):
         """
         Set the boundary conditions for the left and right boundaries.
+        For CG: Strong Dirichlet boundary conditions
+        For DG: No strong boundary conditions (handled weakly in variational form)
         """
 
         assert self.V is not None, "Function space not set. Call set_fem_space() first."
 
-        bc_L = fem.dirichletbc(self.LB, self.dofs_L, self.V)
-        bc_R = fem.dirichletbc(self.RB, self.dofs_R, self.V)
-        self.bcs = [bc_L, bc_R]
+        if method == "CG":
+            bc_L = fem.dirichletbc(self.LB, self.dofs_L, self.V)
+            bc_R = fem.dirichletbc(self.RB, self.dofs_R, self.V)
+            self.bcs = [bc_L, bc_R]
+        elif method == "DG":
+            # DG uses weak boundary conditions - no strong BCs
+            self.bcs = []
+            # Initialize UFL constants for boundary values (needed for DG boundary fluxes)
+            self.LB_ufl_const = fem.Constant(self.mesh, self.LB)
+            self.RB_ufl_const = fem.Constant(self.mesh, self.RB)
 
     def set_initial_conditions(self):
         """Set the initial conditions for the blood vessel."""
@@ -182,31 +217,52 @@ class BloodVessel:
             self.middlepoints["flux"].append(global_sol[len(global_sol) // 2, 1])
 
 
-    def set_variational_problem(self, dt: float):
+    def set_variational_problem(self, dt: float, method: Literal["CG", "DG"] = "CG", h: float = 0.03125):
         """
         Set up the variational problem for the blood vessel.
         This method creates the bilinear and linear forms, assembles the matrix and vector,
         and sets up the solver.
         """
 
-
         assert self.V is not None, "Function space not set. Call create_fem_space() first."
-        assert self.bcs, "Boundary conditions not set. Call set_boundary_conditions() first."
 
         u = ufl.TrialFunction(self.V)
         v = ufl.TestFunction(self.V)
 
-        a = ufl.inner(u, v) * ufl.dx
-        L = ufl.inner(self.u_n, v) * ufl.dx
-        L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx
-        L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx
-        L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx
-        L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx
+        if method == "CG":
+            a = ufl.inner(u, v) * ufl.dx
+            L = ufl.inner(self.u_n, v) * ufl.dx
+            L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx
+            L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx
+            L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx
+            L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx
+        
+        elif method == "DG":            
+            # Mass matrix (no stabilization as requested)
+            a = ufl.inner(u, v) * ufl.dx
+            
+            # DG formulation with proper integration by parts
+            L = ufl.inner(self.u_n, v) * ufl.dx
+            L -= dt * ufl.inner(self.B(self.u_n), v) * ufl.dx
+            
+            L += dt * ufl.inner(self.F(self.u_n), v.dx(0)) * ufl.dx
+            
+            # Interior face fluxes
+            L += dt * ufl.inner(self.LxF(self.u_n), ufl.jump(v)) * ufl.dS
+            
+            # Boundary fluxes - weak enforcement of boundary conditions
+            ds = ufl.Measure("ds", domain=self.mesh, subdomain_data=self.facet_tags)
+            L += dt * ufl.inner(self.boundary_flux_left(self.u_n), v) * ds(1)
+            L += dt * ufl.inner(self.boundary_flux_right(self.u_n), v) * ds(2)
 
         self.bilinear = fem.form(a)
         self.linear = fem.form(L)
 
-        self.A = petsc.assemble_matrix(self.bilinear, bcs=self.bcs)
+        # For DG, no boundary conditions are applied to the matrix
+        if method == "DG":
+            self.A = petsc.assemble_matrix(self.bilinear)
+        else:
+            self.A = petsc.assemble_matrix(self.bilinear, bcs=self.bcs)
         self.A.assemble()
         
         self.rhs = petsc.create_vector(self.linear)
@@ -219,7 +275,7 @@ class BloodVessel:
         self.u = fem.Function(self.V)
         self.u.x.array[:] = self.u_n.x.array
 
-    def initial_setup(self, h: float, dt: float):
+    def initial_setup(self, h: float, dt: float, method: Literal["CG", "DG"] = "CG"):
         """
         Initial setup for the blood vessel.
         This method creates the mesh, sets up the finite element space, boundary conditions,
@@ -227,11 +283,17 @@ class BloodVessel:
         """
 
         self.create_mesh(h)
-        self.create_fem_space()
+
+        if method == "CG":
+            element_type = "Lagrange"
+        elif method == "DG":
+            element_type = "Discontinuous Lagrange"
+
+        self.create_fem_space(element_type=element_type)
         self.set_boundary_dofs()
-        self.set_boundary_conditions()
+        self.set_boundary_conditions(method)
         self.set_initial_conditions()
-        self.set_variational_problem(dt)
+        self.set_variational_problem(dt, method, h)
 
     def save_middlepoint_plot(self, T: float, quantity: Literal["area", "flux"], filename: str):
         """
@@ -331,7 +393,75 @@ class BloodVessel:
             [0, 1],
             [self.c2(U) - self.alpha * (U[1] / U[0]) ** 2, 2 * self.alpha * (U[1] / U[0])]
         ])
+
+    def max_eigval_abs(self, U: fem.Function):
+        """
+        Compute the maximum absolute eigenvalue of the system.
+        For the 2x2 hyperbolic system, eigenvalues are λ₁ = αu + c and λ₂ = αu - c.
+        """
+        assert U.ufl_shape == (2, )
+        
+        u = self.alpha * (U[1] / U[0])  # αu
+        c_alpha = ufl.sqrt(self.c2(U) + self.alpha * (self.alpha - 1) * (U[1] / U[0]) ** 2)
+        
+        lambda1 = u + c_alpha
+        lambda2 = u - c_alpha
+        
+        # Maximum absolute eigenvalue using UFL conditional
+        return ufl.max_value(
+            ufl.conditional(ufl.ge(lambda1, 0), lambda1, -lambda1),
+            ufl.conditional(ufl.ge(lambda2, 0), lambda2, -lambda2)
+        )
+
+    def LxF(self, U: fem.Function):
+        """
+        Lax-Friedrichs numerical flux for the blood vessel.
+        This method computes the numerical flux for the variational problem.
+        """
+
+        assert U.ufl_shape == (2, )
+
+        eigval = ufl.max_value(self.max_eigval_abs(U('+')), self.max_eigval_abs(U('-')))
+
+        return ufl.avg(self.F(U)) - 0.5 * eigval * ufl.jump(U)
+
+    def update_dg_boundary_values(self):
+        """
+        Update the boundary values for DG method.
+        This method updates the UFL constants used in boundary flux terms.
+        """
+        
+        # Update existing constants
+        self.LB_ufl_const.value = self.LB    
     
+        # Update existing constants
+        self.RB_ufl_const.value = self.RB
+
+    def boundary_flux_left(self, U: fem.Function):
+        """
+        Boundary flux for left boundary (inflow/outflow)
+        """
+        # Use updatable UFL constants for boundary values
+        LB_ufl = self.LB_ufl_const
+        
+        # Compute maximum eigenvalue for stability
+        max_eig = self.max_eigval_abs(U)
+        
+        # Lax-Friedrichs boundary flux
+        return 0.5 * (self.F(U) + self.F(LB_ufl)) - 0.5 * max_eig * (U - LB_ufl)
+    
+    def boundary_flux_right(self, U: fem.Function):
+        """
+        Boundary flux for right boundary (inflow/outflow)
+        """
+        # Use updatable UFL constants for boundary values
+        RB_ufl = self.RB_ufl_const
+        
+        # Compute maximum eigenvalue for stability
+        max_eig = self.max_eigval_abs(U)
+        
+        # Lax-Friedrichs boundary flux
+        return 0.5 * (self.F(U) + self.F(RB_ufl)) - 0.5 * max_eig * (RB_ufl - U)
     
     ########### Numpy methods for BC problem #############
 
@@ -495,7 +625,7 @@ class VesselSystem:
             vessel = BloodVessel(id=id, **data)
             self.vessels[id] = vessel
 
-    def setup(self, h: float, dt: float):
+    def setup(self, h: float, dt: float, method: Literal["CG", "DG"] = "CG"):
         """
         Set up the system of vessels.
         This method initializes each vessel with the given mesh size `h` and time step `dt`.
@@ -504,7 +634,7 @@ class VesselSystem:
         """
 
         for vessel in self.vessels.values():
-            vessel.initial_setup(h, dt)
+            vessel.initial_setup(h, dt, method)
 
         MPI.COMM_WORLD.barrier()  # Ensure all processes are synchronized before proceeding
 
