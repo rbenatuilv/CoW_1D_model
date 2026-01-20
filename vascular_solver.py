@@ -96,7 +96,7 @@ class VascularSolver:
 
             comm.Barrier()
 
-    def create_results_directory(self, mode: Literal["main", "test"] = "main"):
+    def create_results_directory(self, mode: Literal["main", "test", "test_single"] = "main", method: Literal["CG", "DG"] = "CG"):
         """
         Create the results directory structure for storing plots and data.
         Args:
@@ -110,12 +110,17 @@ class VascularSolver:
         path = os.path.join(path, mode)
         if not os.path.exists(path):
             os.mkdir(path)
+        
+        path = os.path.join(path, method)
+        if not os.path.exists(path):
+            os.mkdir(path)
 
         name = f"{self.name}_h{self.h}_dt{self.dt}" if self.name is not None else f"{self.model}_{self.method}_h{self.h}_dt{self.dt}"
 
         path = os.path.join(path, name)
         if not os.path.exists(path):
             os.mkdir(path)
+        
 
         self.results_path = path
 
@@ -134,7 +139,7 @@ class VascularSolver:
         if not os.path.exists(data_path):
             os.mkdir(data_path)
 
-    def plot_solutions(self, T: float, mode: Literal["main", "test"] = "main"):
+    def plot_solutions(self, T: float, mode: Literal["main", "test", "test_single"] = "main", method: Literal["CG", "DG"] = "CG"):
         """
         Plot the solutions of the vascular system for each vessel.
         Args:
@@ -147,7 +152,7 @@ class VascularSolver:
         if rank != 0:
             return
 
-        self.create_results_directory(mode)
+        self.create_results_directory(mode, method)
 
         path = os.path.join(self.results_path, "plots")
 
@@ -160,7 +165,7 @@ class VascularSolver:
 
         print(f"Plots saved to {self.results_path}")
 
-    def save_solutions(self, mode: Literal["main", "test"] = "main"):
+    def save_solutions(self, mode: Literal["main", "test", "test_single"] = "main", method: Literal["CG", "DG"] = "CG"):
         """
         Save the solutions of the vascular system for each vessel.
         Args:
@@ -175,7 +180,7 @@ class VascularSolver:
         if not self.network:
             raise RuntimeError("System not set. Please set the system before saving solutions.")
         
-        self.create_results_directory(mode)
+        self.create_results_directory(mode, method)
 
         path = os.path.join(self.results_path, "data")
 
