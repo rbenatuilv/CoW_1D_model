@@ -5,7 +5,7 @@ from vascular_net import VascularNetwork
 from typing import Literal
 
 
-def main(T: float = 1.0, mode: Literal["main", "test"] = "main", method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "HLL", name: str | None = None):
+def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF", name: str | None = None):
 
     h = 3 * 0.03125
     dt = 2 * 1e-5
@@ -19,8 +19,8 @@ def main(T: float = 1.0, mode: Literal["main", "test"] = "main", method: Literal
     solver.setup(h=h, dt=dt)
 
     solver.solve(t_end=T)
-    solver.plot_solutions(T, mode=mode)
-    solver.save_solutions(mode=mode)
+    solver.plot_solutions(T, mode=mode, method=method)
+    solver.save_solutions(mode=mode, method=method)
 
 
 if __name__ == "__main__":
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     T = 1.0
     mode = "main"
     method = "CG"
-    num_flux = "HLL"
+    num_flux = "LxF"
     name = None
 
     for i, arg in enumerate(sys.argv):
@@ -44,7 +44,7 @@ if __name__ == "__main__":
         elif arg == "--name" and i + 1 < len(sys.argv):
             name = sys.argv[i + 1]
 
-    if mode not in ["main", "test"]:
+    if mode not in ["main", "test", "test_single"]:
         raise ValueError("Mode must be either 'main' or 'test'.")
     if T <= 0:
         raise ValueError("T must be a positive number.")
