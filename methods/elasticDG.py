@@ -110,24 +110,24 @@ class ElasticDGVessel(ElasticVessel):
         # That is why we use -ufl.jump(u) here.
 
         flux_avg = ufl.avg(self.F(u)) # type: ignore
-        jump = -ufl.jump(u)  # type: ignore
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
+        jump = ufl.jump(u)  # type: ignore
+        return flux_avg + 0.5 * lambda_max * jump # type: ignore
 
     def LxF_bound_L(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u), self.max_eigval(self.LB_fem))
 
         # Lax-Friedrichs numerical flux at left boundary
         flux_avg = 0.5 * (self.F(u) + self.F(self.LB_fem)) # type: ignore
-        jump = u - self.LB_fem
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
+        jump = self.LB_fem - u
+        return flux_avg + 0.5 * lambda_max * jump # type: ignore
 
     def LxF_bound_R(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u), self.max_eigval(self.RB_fem))
 
         # Lax-Friedrichs numerical flux at right boundary
         flux_avg = 0.5 * (self.F(u) + self.F(self.RB_fem)) # type: ignore
-        jump = self.RB_fem - u
-        return flux_avg - 0.5 * lambda_max * jump # type: ignore
+        jump = u - self.RB_fem
+        return flux_avg + 0.5 * lambda_max * jump # type: ignore
     
 
     # HLL flux
@@ -153,6 +153,28 @@ class ElasticDGVessel(ElasticVessel):
 
         return flux
 
+    def HLL_flux_minsoo(self, u: fem.Function):
+        SL = ufl.min_value(self.lambda1(u('-')), self.lambda1((u('+')+u('-'))/2))
+        SR = ufl.max_value(self.lambda2(u('+')), self.lambda2((u('+')+u('-'))/2))
+
+        FL = self.F(u('-'))  # type: ignore
+        FR = self.F(u('+'))  # type: ignore
+
+        jump = ufl.jump(u)  # type: ignore 
+
+        flux = ufl.conditional(
+            ufl.ge(SL, 0),
+            FL,
+            ufl.conditional(
+                ufl.le(SR, 0),
+                FR,
+                (SR * FL - SL * FR + SL * SR * -1*(jump)) / (SR - SL)  # type: ignore
+            )
+        )
+
+        return flux
+
+
     def HLL_bound_L(self, u: fem.Function):
         SL = ufl.min_value(self.lambda1(u), self.lambda1(self.LB_fem))
         SR = ufl.max_value(self.lambda2(self.LB_fem), self.lambda2(u))
@@ -174,6 +196,27 @@ class ElasticDGVessel(ElasticVessel):
 
         return flux
     
+    def HLL_bound_L_minsoo(self, u: fem.Function):
+        SL = ufl.min_value(self.lambda1(self.LB_fem), self.lambda1((u+self.LB_fem)/2))
+        SR = ufl.max_value(self.lambda2(u), self.lambda2((u+self.LB_fem)/2))
+
+        FL = self.F(self.LB_fem)  # type: ignore
+        FR = self.F(u)  # type: ignore
+
+        jump = self.LB_fem - u  # type: ignore 
+
+        flux = ufl.conditional(
+            ufl.ge(SL, 0),
+            FL,
+            ufl.conditional(
+                ufl.le(SR, 0),
+                FR,
+                (SR * FL - SL * FR + SL * SR * -1*(jump)) / (SR - SL)  # type: ignore
+            )
+        )
+
+        return flux
+    
     def HLL_bound_R(self, u: fem.Function):
         SL = ufl.min_value(self.lambda1(self.RB_fem), self.lambda1(u))
         SR = ufl.max_value(self.lambda2(u), self.lambda2(self.RB_fem))
@@ -190,6 +233,27 @@ class ElasticDGVessel(ElasticVessel):
                 ufl.le(SR, 0),
                 FR,
                 (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
+            )
+        )
+
+        return flux
+
+    def HLL_bound_R_minsoo(self, u: fem.Function):
+        SL = ufl.min_value(self.lambda1(u), self.lambda1((u+self.RB_fem)/2))
+        SR = ufl.max_value(self.lambda2(self.RB_fem), self.lambda2((u+self.RB_fem)/2))
+
+        FL = self.F(u)  # type: ignore
+        FR = self.F(self.RB_fem)  # type: ignore
+
+        jump = u-self.RB_fem  # type: ignore 
+
+        flux = ufl.conditional(
+            ufl.ge(SL, 0),
+            FL,
+            ufl.conditional(
+                ufl.le(SR, 0),
+                FR,
+                (SR * FL - SL * FR + SL * SR * -1*(jump)) / (SR - SL)  # type: ignore
             )
         )
 
@@ -218,13 +282,13 @@ class ElasticDGVessel(ElasticVessel):
     def HxF_LxF(self, u: fem.Function, v: fem.Function):
         ds = ufl.Measure("ds", domain=self.mesh, subdomain_data=self.msh_tags)
 
-        jump = -ufl.jump(v)  # type: ignore
+        jump = ufl.jump(v)  # type: ignore
 
         L = -ufl.inner(self.B(u), v) * ufl.dx # type: ignore
         L += ufl.inner(self.F(u), v.dx(0)) * ufl.dx # type: ignore
-        L += ufl.inner(self.LxF(u), jump) * ufl.dS # type: ignore
-        L += ufl.inner(self.LxF_bound_L(u), v) * ds(1) # type: ignore
-        L += ufl.inner(self.LxF_bound_R(u), -v) * ds(2) # type: ignore
+        L -= ufl.inner(self.LxF(u), jump) * ufl.dS # type: ignore
+        L -= ufl.inner(self.LxF_bound_L(u), -v) * ds(1) # type: ignore
+        L -= ufl.inner(self.LxF_bound_R(u), v) * ds(2) # type: ignore
 
         return L
     
