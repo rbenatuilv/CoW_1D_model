@@ -20,7 +20,7 @@ def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", 
 
     solver.solve(t_end=T)
     solver.plot_solutions(T, mode=mode, method=method, num_flux=num_flux)
-    solver.save_solutions(mode=mode, method=method, num_flux=num_flux)
+    solver.save_solutions(T, mode=mode, method=method, num_flux=num_flux)
 
 
 if __name__ == "__main__":
