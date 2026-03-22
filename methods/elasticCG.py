@@ -27,9 +27,6 @@ class ElasticCGVessel(ElasticVessel):
         self.dofs_R = None
         self.bcs = None
 
-        self.u = None  # Current time step solution
-        self.u_n = None  # Previous time step solution
-
         self.bilinear_form = None
         self.linear_form = None
         self.A = None

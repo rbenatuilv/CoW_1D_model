@@ -21,6 +21,10 @@ class ElasticDGVessel(ElasticVessel):
         self.LB_fem = None
         self.RB_fem = None
 
+        
+        self.u = None  # Current time step solution
+        self.u_n = None  # Previous time step solution
+
         self.diff_const = 12.53125
         
         if num_flux not in ["LxF", "HLL"]:
@@ -99,6 +103,23 @@ class ElasticDGVessel(ElasticVessel):
             ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
             ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
         )
+    
+    def max_lambda_u_n(self):
+        # 1. Define the symbolic expression using your function
+        expr_symbolic = self.max_eigval(self.u_n)
+
+        # 2. Create a C++ compiled expression that FEniCSx can evaluate quickly
+        # We evaluate this at the interpolation points (e.g., cell centers or vertices)
+        V_scalar = self.u_n.function_space.sub(0).collapse()[0] # Get a scalar space
+        expr_compiled = fem.Expression(expr_symbolic, V_scalar.element.interpolation_points())
+
+        # 3. Interpolate into a temporary scalar function to get the values
+        max_val_func = fem.Function(V_scalar)
+        max_val_func.interpolate(expr_compiled)
+
+        # 4. Get the actual maximum value from the array
+        local_max = np.max(max_val_func.x.array)
+        return local_max
 
     def LxF(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u('+')), self.max_eigval(u('-')))
