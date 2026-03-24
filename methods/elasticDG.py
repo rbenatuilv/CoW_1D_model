@@ -1,5 +1,5 @@
 from mpi4py import MPI
-from dolfinx import fem, mesh # type: ignore
+from dolfinx import fem, mesh, default_scalar_type # type: ignore
 from dolfinx.fem import petsc # type: ignore
 import ufl
 from basix.ufl import element
@@ -93,33 +93,7 @@ class ElasticDGVessel(ElasticVessel):
 
         self.last_sol = global_sol
 
-    def max_eigval(self, u: fem.Function):
-        eigval1 = self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
-        eigval2 = self.alpha * (u[1] / u[0]) - self.c_alpha_ufl(u)
 
-        # return 1000
-
-        return ufl.max_value(
-            ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
-            ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
-        )
-    
-    def max_lambda_u_n(self):
-        # 1. Define the symbolic expression using your function
-        expr_symbolic = self.max_eigval(self.u_n)
-
-        # 2. Create a C++ compiled expression that FEniCSx can evaluate quickly
-        # We evaluate this at the interpolation points (e.g., cell centers or vertices)
-        V_scalar = self.u_n.function_space.sub(0).collapse()[0] # Get a scalar space
-        expr_compiled = fem.Expression(expr_symbolic, V_scalar.element.interpolation_points())
-
-        # 3. Interpolate into a temporary scalar function to get the values
-        max_val_func = fem.Function(V_scalar)
-        max_val_func.interpolate(expr_compiled)
-
-        # 4. Get the actual maximum value from the array
-        local_max = np.max(max_val_func.x.array)
-        return local_max
 
     def LxF(self, u: fem.Function):
         lambda_max = ufl.max_value(self.max_eigval(u('+')), self.max_eigval(u('-')))
@@ -153,28 +127,28 @@ class ElasticDGVessel(ElasticVessel):
 
     # HLL flux
     
+    # def HLL_flux(self, u: fem.Function):
+    #     SL = ufl.min_value(self.lambda1(u('-')), self.lambda1(u('+')))
+    #     SR = ufl.max_value(self.lambda2(u('+')), self.lambda2(u('-')))
+
+    #     FL = self.F(u('+'))  # type: ignore
+    #     FR = self.F(u('-'))  # type: ignore
+
+    #     jump = -ufl.jump(u)  # type: ignore 
+
+    #     flux = ufl.conditional(
+    #         ufl.ge(SL, 0),
+    #         FL,
+    #         ufl.conditional(
+    #             ufl.le(SR, 0),
+    #             FR,
+    #             (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
+    #         )
+    #     )
+
+    #     return flux
+
     def HLL_flux(self, u: fem.Function):
-        SL = ufl.min_value(self.lambda1(u('-')), self.lambda1(u('+')))
-        SR = ufl.max_value(self.lambda2(u('+')), self.lambda2(u('-')))
-
-        FL = self.F(u('+'))  # type: ignore
-        FR = self.F(u('-'))  # type: ignore
-
-        jump = -ufl.jump(u)  # type: ignore 
-
-        flux = ufl.conditional(
-            ufl.ge(SL, 0),
-            FL,
-            ufl.conditional(
-                ufl.le(SR, 0),
-                FR,
-                (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
-            )
-        )
-
-        return flux
-
-    def HLL_flux_minsoo(self, u: fem.Function):
         SL = ufl.min_value(self.lambda1(u('-')), self.lambda1((u('+')+u('-'))/2))
         SR = ufl.max_value(self.lambda2(u('+')), self.lambda2((u('+')+u('-'))/2))
 
@@ -196,28 +170,28 @@ class ElasticDGVessel(ElasticVessel):
         return flux
 
 
-    def HLL_bound_L(self, u: fem.Function):
-        SL = ufl.min_value(self.lambda1(u), self.lambda1(self.LB_fem))
-        SR = ufl.max_value(self.lambda2(self.LB_fem), self.lambda2(u))
+    # def HLL_bound_L(self, u: fem.Function):
+    #     SL = ufl.min_value(self.lambda1(u), self.lambda1(self.LB_fem))
+    #     SR = ufl.max_value(self.lambda2(self.LB_fem), self.lambda2(u))
 
-        FL = self.F(self.LB_fem)  # type: ignore
-        FR = self.F(u)  # type: ignore
+    #     FL = self.F(self.LB_fem)  # type: ignore
+    #     FR = self.F(u)  # type: ignore
 
-        jump = u - self.LB_fem  # type: ignore
+    #     jump = u - self.LB_fem  # type: ignore
 
-        flux = ufl.conditional(
-            ufl.ge(SL, 0),
-            FL,
-            ufl.conditional(
-                ufl.le(SR, 0),
-                FR,
-                (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
-            )
-        )
+    #     flux = ufl.conditional(
+    #         ufl.ge(SL, 0),
+    #         FL,
+    #         ufl.conditional(
+    #             ufl.le(SR, 0),
+    #             FR,
+    #             (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
+    #         )
+    #     )
 
-        return flux
+    #     return flux
     
-    def HLL_bound_L_minsoo(self, u: fem.Function):
+    def HLL_bound_L(self, u: fem.Function):
         SL = ufl.min_value(self.lambda1(self.LB_fem), self.lambda1((u+self.LB_fem)/2))
         SR = ufl.max_value(self.lambda2(u), self.lambda2((u+self.LB_fem)/2))
 
@@ -238,28 +212,28 @@ class ElasticDGVessel(ElasticVessel):
 
         return flux
     
+    # def HLL_bound_R(self, u: fem.Function):
+    #     SL = ufl.min_value(self.lambda1(self.RB_fem), self.lambda1(u))
+    #     SR = ufl.max_value(self.lambda2(u), self.lambda2(self.RB_fem))
+
+    #     FL = self.F(u)  # type: ignore
+    #     FR = self.F(self.RB_fem)  # type: ignore
+
+    #     jump = self.RB_fem - u  # type: ignore
+
+    #     flux = ufl.conditional(
+    #         ufl.ge(SL, 0),
+    #         FL,
+    #         ufl.conditional(
+    #             ufl.le(SR, 0),
+    #             FR,
+    #             (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
+    #         )
+    #     )
+
+    #     return flux
+
     def HLL_bound_R(self, u: fem.Function):
-        SL = ufl.min_value(self.lambda1(self.RB_fem), self.lambda1(u))
-        SR = ufl.max_value(self.lambda2(u), self.lambda2(self.RB_fem))
-
-        FL = self.F(u)  # type: ignore
-        FR = self.F(self.RB_fem)  # type: ignore
-
-        jump = self.RB_fem - u  # type: ignore
-
-        flux = ufl.conditional(
-            ufl.ge(SL, 0),
-            FL,
-            ufl.conditional(
-                ufl.le(SR, 0),
-                FR,
-                (SR * FL - SL * FR + SL * SR * jump) / (SR - SL)  # type: ignore
-            )
-        )
-
-        return flux
-
-    def HLL_bound_R_minsoo(self, u: fem.Function):
         SL = ufl.min_value(self.lambda1(u), self.lambda1((u+self.RB_fem)/2))
         SR = ufl.max_value(self.lambda2(self.RB_fem), self.lambda2((u+self.RB_fem)/2))
 
@@ -327,6 +301,8 @@ class ElasticDGVessel(ElasticVessel):
         return L
 
     def set_variational_problem(self, dt: float):
+        self.dt = fem.Constant(self.mesh, default_scalar_type(dt))
+
         u1 = ufl.TrialFunction(self.V)
         v1 = ufl.TestFunction(self.V)
         
@@ -335,7 +311,7 @@ class ElasticDGVessel(ElasticVessel):
 
         a1 = ufl.inner(u1, v1) * ufl.dx
         L1 = ufl.inner(self.u_n, v1) * ufl.dx
-        L1 += dt * flux_func(self.u_n, v1) # type: ignore
+        L1 += self.dt * flux_func(self.u_n, v1) # type: ignore
 
         self.bilinear_form_1 = fem.form(a1)
         self.linear_form_1 = fem.form(L1)
@@ -346,7 +322,7 @@ class ElasticDGVessel(ElasticVessel):
         a2 = ufl.inner(u2, v2) * ufl.dx
         L2 = 0.5 * ufl.inner(self.u_n, v2) * ufl.dx # type: ignore
         L2 += 0.5 * ufl.inner(self.v_n, v2) * ufl.dx # type: ignore
-        L2 += 0.5 * dt * flux_func(self.v_n, v2) # type: ignore
+        L2 += 0.5 * self.dt * flux_func(self.v_n, v2) # type: ignore
 
         self.bilinear_form_2 = fem.form(a2)
         self.linear_form_2 = fem.form(L2)
@@ -403,7 +379,6 @@ class ElasticDGVessel(ElasticVessel):
         self.assemble_solver()
 
         self.h = h
-        self.dt = dt
 
     def minmod(self, a: float, b: float, c: float) -> float:
         """
