@@ -94,11 +94,12 @@ class VascularSolver:
         t = 0.0
         with progress_context as pbar:
             while t<t_end:
-                dt = self.calculate_dt()
+                dt = self.calculate_dt(enforce=self.method)
                 self.dt = min(dt, t_end-t)
                 t += self.dt
 
                 for vessel in self.network.vessels.values():
+                    vessel.dt.value = self.dt
                     vessel.solve()
                     vessel.add_solution(t)
 
