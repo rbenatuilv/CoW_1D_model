@@ -356,8 +356,8 @@ class ElasticDGVessel(ElasticVessel):
 
         self.solver_1 = PETSc.KSP().create(self.mesh.comm)
         self.solver_1.setOperators(self.A1)
-        self.solver_1.setType(PETSc.KSP.Type.PREONLY)
-        self.solver_1.getPC().setType(PETSc.PC.Type.LU)
+        self.solver_1.setType(PETSc.KSP.Type.CG)
+        self.solver_1.getPC().setType(PETSc.PC.Type.BJACOBI)
 
         self.A2 = petsc.assemble_matrix(self.bilinear_form_2)
         self.A2.assemble()
@@ -366,8 +366,8 @@ class ElasticDGVessel(ElasticVessel):
 
         self.solver_2 = PETSc.KSP().create(self.mesh.comm)
         self.solver_2.setOperators(self.A2)
-        self.solver_2.setType(PETSc.KSP.Type.PREONLY)
-        self.solver_2.getPC().setType(PETSc.PC.Type.LU)
+        self.solver_2.setType(PETSc.KSP.Type.CG)
+        self.solver_2.getPC().setType(PETSc.PC.Type.BJACOBI)
 
     def setup(self, h: float, dt: float):
         self.create_mesh(h)
