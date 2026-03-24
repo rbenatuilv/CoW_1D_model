@@ -1,5 +1,5 @@
 from mpi4py import MPI
-from dolfinx import fem, mesh # type: ignore
+from dolfinx import fem, mesh, default_scalar_type # type: ignore
 from dolfinx.fem import petsc # type: ignore
 import ufl
 from basix.ufl import element
@@ -91,15 +91,17 @@ class ElasticCGVessel(ElasticVessel):
         if self.u_n is None:
             raise ValueError("Initial condition not set. Call set_initial_condition() first.")
         
+        self.dt = fem.Constant(self.mesh, default_scalar_type(dt))
+        
         u = ufl.TrialFunction(self.V)
         v = ufl.TestFunction(self.V)
 
         a = ufl.inner(u, v) * ufl.dx
         L = ufl.inner(self.u_n, v) * ufl.dx
-        L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx # type: ignore
-        L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx # type: ignore
-        L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx # type: ignore
-        L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx # type: ignore
+        L += self.dt * ufl.inner(self.FLW(self.u_n, self.dt), v.dx(0)) * ufl.dx # type: ignore
+        L += (self.dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx # type: ignore
+        L -= (self.dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx # type: ignore
+        L -= self.dt * ufl.inner(self.BLW(self.u_n, self.dt), v) * ufl.dx # type: ignore
 
         self.bilinear_form = fem.form(a)
         self.linear_form = fem.form(L)
@@ -131,7 +133,6 @@ class ElasticCGVessel(ElasticVessel):
         self.assemble_solver()
 
         self.h = h
-        self.dt = dt
 
     def dU_dz(self, u: np.ndarray) -> np.ndarray:
         area = u[:, 0]
