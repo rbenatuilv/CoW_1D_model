@@ -5,9 +5,10 @@ from vascular_net import VascularNetwork
 from typing import Literal
 
 
-def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF", name: str | None = None):
+def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", 
+         method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF", name: str | None = None,
+         h: float=3 * 0.03125):
 
-    h = 3 * 0.03125
     dt = 2 * 1e-5
 
     data_loader = VascularDataLoader(mode=mode)
@@ -30,6 +31,7 @@ if __name__ == "__main__":
     mode = "main"
     method = "CG"
     num_flux = "LxF"
+    h = 3 * 0.03125
     name = None
 
     for i, arg in enumerate(sys.argv):
@@ -43,6 +45,8 @@ if __name__ == "__main__":
             num_flux = sys.argv[i + 1]
         elif arg == "--name" and i + 1 < len(sys.argv):
             name = sys.argv[i + 1]
+        elif arg == "--h" and i + 1 < len(sys.argv):
+            h = float(sys.argv[i + 1])
 
     if mode not in ["main", "test", "test_single"]:
         raise ValueError("Mode must be either 'main' or 'test'.")
@@ -57,5 +61,5 @@ if __name__ == "__main__":
         print(f"Running with T={T}, mode={mode}, method={method}, num_flux={num_flux}")
     else:
         print(f"Running with T={T}, mode={mode}, method={method}")
-    main(T=T, mode=mode, method=method, num_flux=num_flux, name=name) # type: ignore
+    main(T=T, mode=mode, method=method, num_flux=num_flux, name=name, h=h) # type: ignore
     print("Simulation completed.")
