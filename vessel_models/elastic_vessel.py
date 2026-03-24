@@ -137,3 +137,31 @@ class ElasticVessel(BloodVessel):
 
     def dU_dz(self, u: np.ndarray):
         raise NotImplementedError("This method should be implemented in the numerical method class.")
+    
+    def max_eigval(self, u: fem.Function):
+        eigval1 = self.alpha * (u[1] / u[0]) + self.c_alpha_ufl(u)
+        eigval2 = self.alpha * (u[1] / u[0]) - self.c_alpha_ufl(u)
+
+        # return 1000
+
+        return ufl.max_value(
+            ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
+            ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
+        )
+    
+    def max_lambda_u_n(self):
+        # 1. Define the symbolic expression using your function
+        expr_symbolic = self.max_eigval(self.u_n)
+
+        # 2. Create a C++ compiled expression that FEniCSx can evaluate quickly
+        # We evaluate this at the interpolation points (e.g., cell centers or vertices)
+        V_scalar = self.u_n.function_space.sub(0).collapse()[0] # Get a scalar space
+        expr_compiled = fem.Expression(expr_symbolic, V_scalar.element.interpolation_points())
+
+        # 3. Interpolate into a temporary scalar function to get the values
+        max_val_func = fem.Function(V_scalar)
+        max_val_func.interpolate(expr_compiled)
+
+        # 4. Get the actual maximum value from the array
+        local_max = np.max(max_val_func.x.array)
+        return local_max
