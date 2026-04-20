@@ -20,6 +20,7 @@ class VascularSolver:
         self.method = method
         self.num_flux = num_flux
         self.name = name
+        self.STEP_CHECKPOINT = 0.001
 
         self.bc_solver = ElasticBCSolver()
 
@@ -92,17 +93,35 @@ class VascularSolver:
          
         progress_context = tqdm(total=t_end, desc="Solving Vascular Network", unit="s") if rank == 0 else nullcontext()
         t = 0.0
+        
+        t_checkpoint = self.STEP_CHECKPOINT
+        n_checkpoint = 1
+        save_checkpoint = False
         with progress_context as pbar:
             while t<t_end:
                 dt = self.calculate_dt(enforce=self.method)
                 self.dt = min(dt, t_end-t)
-                t += self.dt
 
+                #### Save checkpoint
+                if t+self.dt >= t_checkpoint:
+                    self.dt = t_checkpoint-t
+                    t = t_checkpoint
+                    n_checkpoint += 1
+                    t_checkpoint = self.STEP_CHECKPOINT * n_checkpoint
+                    save_checkpoint = True
+                else:
+                    t += self.dt
+                ####
+
+                #### Solve networks
                 for vessel in self.network.vessels.values():
                     vessel.dt.value = self.dt
                     vessel.solve()
-                    vessel.add_solution(t)
+                    vessel.add_solution(t, save_checkpoint)
 
+                ####
+                save_checkpoint = False
+                ####
                 comm.Barrier()
 
                 if rank == 0:
