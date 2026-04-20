@@ -63,7 +63,7 @@ class BloodVessel(Blood):
         self.last_saved_time = 0.0
         self.last_sol = None # To be updated during the simulation
 
-    def add_solution(self, t: float):
+    def add_solution(self, t: float, save_array: bool):
         raise NotImplementedError("Method add_solution() must be implemented in subclasses.")
 
     def save_middlepoint_plot(self, quantity: Literal["A", "Q"], filename: str):
@@ -101,12 +101,19 @@ class BloodVessel(Blood):
         Args:
             dirname (str): Directory where the solutions will be saved.
         """
-
         if not os.path.exists(dirname):
             os.makedirs(dirname)
 
         filename = os.path.join(dirname, f"vessel_{self.id}_solutions.npz")
 
-        # Save a pkl file with the solutions
-        with open(filename, 'wb') as f:
-            np.savez(f, area=np.array(self.solutions["A"]), flux=np.array(self.solutions["Q"]), time=np.array(self.solutions["t"]))
+        # Extract and convert one at a time, removing the original to free RAM
+        # Note: np.savez accepts a filename directly, no need for `with open(...)`
+        time_arr = np.array(self.solutions.pop("t"))
+        area_arr = np.array(self.solutions.pop("A"))
+        flux_arr = np.array(self.solutions.pop("Q"))
+
+        np.savez(filename, area=area_arr, flux=flux_arr, time=time_arr)
+        
+        # Optional: force garbage collection here if saving multiple vessels
+        import gc
+        gc.collect()

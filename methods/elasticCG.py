@@ -176,7 +176,7 @@ class ElasticCGVessel(ElasticVessel):
 
         
         
-    def add_solution(self, t: float):
+    def add_solution(self, t: float, save_array: bool):
         if self.mesh is None or self.V is None:
             raise ValueError("Mesh or function space not created. Call create_mesh() and create_fem_space() first.")
 
@@ -201,7 +201,7 @@ class ElasticCGVessel(ElasticVessel):
 
         self.last_sol = global_sol.copy()
 
-        if (rank == 0) and (t - self.last_saved_time) >= 0.001:
+        if (rank == 0) and (t - self.last_saved_time) >= 1e-8 and save_array:
             self.solutions["t"].append(t)
             self.solutions["A"].append(global_sol[:, 0])
             self.solutions["Q"].append(global_sol[:, 1])
