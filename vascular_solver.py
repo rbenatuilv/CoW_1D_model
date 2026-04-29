@@ -20,7 +20,7 @@ class VascularSolver:
         self.method = method
         self.num_flux = num_flux
         self.name = name
-        self.STEP_CHECKPOINT = 0.001
+        self.STEP_CHECKPOINT = 0.0001
 
         self.bc_solver = ElasticBCSolver()
 
@@ -87,32 +87,39 @@ class VascularSolver:
             max_lambda = np.maximum(vessel.max_lambda_u_n(), max_lambda)
         return C*self.h/max_lambda
 
-    def solve(self, t_end: float):
+    def solve(self, t_end: float, overload_dt: bool=False, dt_forced: float=0.0001):
         comm = MPI.COMM_WORLD
         rank = comm.rank
          
         progress_context = tqdm(total=t_end, desc="Solving Vascular Network", unit="s") if rank == 0 else nullcontext()
         t = 0.0
+
+        if overload_dt:
+            self.dt = dt_forced
         
         t_checkpoint = self.STEP_CHECKPOINT
         n_checkpoint = 1
         save_checkpoint = False
         with progress_context as pbar:
             while t<t_end:
-                dt = self.calculate_dt(enforce=self.method)
-                self.dt = min(dt, t_end-t)
-
-                #### Save checkpoint
-                if t+self.dt >= t_checkpoint:
-                    self.dt = t_checkpoint-t
-                    t = t_checkpoint
-                    n_checkpoint += 1
-                    t_checkpoint = self.STEP_CHECKPOINT * n_checkpoint
-                    save_checkpoint = True
+                if not overload_dt:
+                    dt = self.calculate_dt(enforce=self.method)
+                    self.dt = min(dt, t_end-t)
+                    #### Save checkpoint
+                    if t+self.dt >= t_checkpoint:
+                        self.dt = t_checkpoint-t
+                        t = t_checkpoint
+                        n_checkpoint += 1
+                        t_checkpoint = self.STEP_CHECKPOINT * n_checkpoint
+                        save_checkpoint = True
+                    else:
+                        t += self.dt
+                    ####
                 else:
-                    t += self.dt
-                ####
-
+                    t = self.dt * n_checkpoint
+                    n_checkpoint += 1
+                    if n_checkpoint % 2 == 1:
+                            save_checkpoint = True
                 #### Solve networks
                 for vessel in self.network.vessels.values():
                     vessel.dt.value = self.dt
@@ -143,7 +150,7 @@ class VascularSolver:
 
                 comm.Barrier()
                 if rank==0:
-                    pbar.update(dt)
+                    pbar.update(self.dt)
 
     def create_results_directory(self, T: float, mode: Literal["main", "test", "test_single"] = "main", 
         method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF"):

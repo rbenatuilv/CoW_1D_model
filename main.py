@@ -3,11 +3,12 @@ from dataload import VascularDataLoader
 from vascular_net import VascularNetwork
 
 from typing import Literal
+import numpy as np
 
 
 def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", 
          method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF", name: str | None = None,
-         h: float=3 * 0.03125):
+         h: float=3 * 0.03125, force_dt: bool=False, dt_forced: float=0.0001):
 
     dt = 2 * 1e-5
 
@@ -19,7 +20,7 @@ def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main",
     solver = VascularSolver(network, method=method, num_flux=num_flux, name=name)
     solver.setup(h=h, dt=dt)
 
-    solver.solve(t_end=T)
+    solver.solve(t_end=T, overload_dt=force_dt, dt_forced=dt_forced)
     solver.plot_solutions(T, mode=mode, method=method, num_flux=num_flux)
     solver.save_solutions(T, mode=mode, method=method, num_flux=num_flux)
 
