@@ -40,3 +40,4 @@ tqdm==4.67.1
 typing_extensions==4.13.2
 urllib3==2.4.0
 vtk==9.4.2
+jupyterlab>=4.5.6

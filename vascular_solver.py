@@ -1,9 +1,13 @@
 from mpi4py import MPI
 from tqdm import tqdm
+from contextlib import nullcontext
 from dolfinx import default_scalar_type  # type: ignore
 import numpy as np
 import os
 from typing import Literal
+
+from dolfinx import fem, mesh # type: ignore
+import ufl
 
 from vascular_net import VascularNetwork
 from boundary_solver.elasticBC import ElasticBCSolver
@@ -16,6 +20,7 @@ class VascularSolver:
         self.method = method
         self.num_flux = num_flux
         self.name = name
+        self.STEP_CHECKPOINT = 0.0001
 
         self.bc_solver = ElasticBCSolver()
 
@@ -56,45 +61,96 @@ class VascularSolver:
 
         comm.Barrier()
 
-    def solve(self, t_end: float):
+    def max_eigval(self, u: fem.Function):
+        eigval1 = self.network.alpha * (u[1] / u[0]) + self.network.c_alpha_ufl(u)
+        eigval2 = self.network.alpha * (u[1] / u[0]) - self.network.c_alpha_ufl(u)
+
+        # return 1000
+
+        return ufl.max_value(
+            ufl.conditional(ufl.ge(eigval1, 0), eigval1, -eigval1),
+            ufl.conditional(ufl.ge(eigval2, 0), eigval2, -eigval2)
+        )
+    
+
+    
+    def calculate_dt(self, enforce: Literal["CG", "DG", "min"]="min"):
+        if enforce == "CG":
+            C = np.sqrt(3)/3
+        elif enforce == "DG":
+            C = 0.5
+        else:
+            C = np.minimum(np.sqrt(3)/3, 0.5)
+        max_lambda = -1*np.inf
+        ### IT works only for DG
+        for vessel in self.network.vessels.values():
+            max_lambda = np.maximum(vessel.max_lambda_u_n(), max_lambda)
+        return C*self.h/max_lambda
+
+    def solve(self, t_end: float, overload_dt: bool=False, dt_forced: float=0.0001):
         comm = MPI.COMM_WORLD
         rank = comm.rank
-
-        time_steps = int(t_end / self.dt)
          
-        if rank == 0:
-            iterator = tqdm(range(time_steps), desc="Solving Vascular Network", unit="step")
-        else:
-            iterator = range(time_steps)
-
+        progress_context = tqdm(total=t_end, desc="Solving Vascular Network", unit="s") if rank == 0 else nullcontext()
         t = 0.0
-        for _ in iterator:
-            t += self.dt
 
-            for vessel in self.network.vessels.values():
-                vessel.solve()
-                vessel.add_solution(t)
-
-            comm.Barrier()
-
-            if rank == 0:
+        if overload_dt:
+            self.dt = dt_forced
+        
+        t_checkpoint = self.STEP_CHECKPOINT
+        n_checkpoint = 1
+        save_checkpoint = False
+        with progress_context as pbar:
+            while t<t_end:
+                if not overload_dt:
+                    dt = self.calculate_dt(enforce=self.method)
+                    self.dt = min(dt, t_end-t)
+                    #### Save checkpoint
+                    if t+self.dt >= t_checkpoint:
+                        self.dt = t_checkpoint-t
+                        t = t_checkpoint
+                        n_checkpoint += 1
+                        t_checkpoint = self.STEP_CHECKPOINT * n_checkpoint
+                        save_checkpoint = True
+                    else:
+                        t += self.dt
+                    ####
+                else:
+                    t = self.dt * n_checkpoint
+                    n_checkpoint += 1
+                    if n_checkpoint % 2 == 1:
+                            save_checkpoint = True
+                #### Solve networks
                 for vessel in self.network.vessels.values():
-                    self.bc_solver.solve_inflow_BC(vessel, t, self.dt)
-                    self.bc_solver.solve_outflow_BC(vessel, self.dt)
+                    vessel.dt.value = self.dt
+                    vessel.solve()
+                    vessel.add_solution(t, save_checkpoint)
 
-                for bid in self.network.bifurcations:
-                    bif = self.network.bifurcations[bid]
+                ####
+                save_checkpoint = False
+                ####
+                comm.Barrier()
 
-                    vessels = [self.network.vessels[v_id] for v_id in bif["branches"]]
-                    self.bc_solver.solve_branch(vessels, bif, dt=self.dt)
+                if rank == 0:
+                    for vessel in self.network.vessels.values():
+                        self.bc_solver.solve_inflow_BC(vessel, t, self.dt)
+                        self.bc_solver.solve_outflow_BC(vessel, self.dt)
 
-            self._broadcast_updated_BCs()
+                    for bid in self.network.bifurcations:
+                        bif = self.network.bifurcations[bid]
 
-            for vessel in self.network.vessels.values():
-                vessel.update_BCs()
-            
+                        vessels = [self.network.vessels[v_id] for v_id in bif["branches"]]
+                        self.bc_solver.solve_branch(vessels, bif, dt=self.dt)
 
-            comm.Barrier()
+                self._broadcast_updated_BCs()
+
+                for vessel in self.network.vessels.values():
+                    vessel.update_BCs()
+                
+
+                comm.Barrier()
+                if rank==0:
+                    pbar.update(self.dt)
 
     def create_results_directory(self, T: float, mode: Literal["main", "test", "test_single"] = "main", 
         method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF"):

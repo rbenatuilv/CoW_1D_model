@@ -1,5 +1,5 @@
 from mpi4py import MPI
-from dolfinx import fem, mesh # type: ignore
+from dolfinx import fem, mesh, default_scalar_type # type: ignore
 from dolfinx.fem import petsc # type: ignore
 import ufl
 from basix.ufl import element
@@ -26,9 +26,6 @@ class ElasticCGVessel(ElasticVessel):
         self.dofs_L = None
         self.dofs_R = None
         self.bcs = None
-
-        self.u = None  # Current time step solution
-        self.u_n = None  # Previous time step solution
 
         self.bilinear_form = None
         self.linear_form = None
@@ -94,15 +91,17 @@ class ElasticCGVessel(ElasticVessel):
         if self.u_n is None:
             raise ValueError("Initial condition not set. Call set_initial_condition() first.")
         
+        self.dt = fem.Constant(self.mesh, default_scalar_type(dt))
+        
         u = ufl.TrialFunction(self.V)
         v = ufl.TestFunction(self.V)
 
         a = ufl.inner(u, v) * ufl.dx
         L = ufl.inner(self.u_n, v) * ufl.dx
-        L += dt * ufl.inner(self.FLW(self.u_n, dt), v.dx(0)) * ufl.dx # type: ignore
-        L += (dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx # type: ignore
-        L -= (dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx # type: ignore
-        L -= dt * ufl.inner(self.BLW(self.u_n, dt), v) * ufl.dx # type: ignore
+        L += self.dt * ufl.inner(self.FLW(self.u_n, self.dt), v.dx(0)) * ufl.dx # type: ignore
+        L += (self.dt ** 2 / 2) * ufl.inner(ufl.dot(self.dB_dU(self.u_n), self.F(self.u_n).dx(0)), v) * ufl.dx # type: ignore
+        L -= (self.dt ** 2 / 2) * ufl.inner(ufl.dot(self.H(self.u_n), self.F(self.u_n).dx(0)), v.dx(0)) * ufl.dx # type: ignore
+        L -= self.dt * ufl.inner(self.BLW(self.u_n, self.dt), v) * ufl.dx # type: ignore
 
         self.bilinear_form = fem.form(a)
         self.linear_form = fem.form(L)
@@ -134,7 +133,6 @@ class ElasticCGVessel(ElasticVessel):
         self.assemble_solver()
 
         self.h = h
-        self.dt = dt
 
     def dU_dz(self, u: np.ndarray) -> np.ndarray:
         area = u[:, 0]
@@ -178,7 +176,7 @@ class ElasticCGVessel(ElasticVessel):
 
         
         
-    def add_solution(self, t: float):
+    def add_solution(self, t: float, save_array: bool):
         if self.mesh is None or self.V is None:
             raise ValueError("Mesh or function space not created. Call create_mesh() and create_fem_space() first.")
 
@@ -203,7 +201,7 @@ class ElasticCGVessel(ElasticVessel):
 
         self.last_sol = global_sol.copy()
 
-        if (rank == 0) and (t - self.last_saved_time) >= 0.001:
+        if (rank == 0) and (t - self.last_saved_time) >= 1e-8 and save_array:
             self.solutions["t"].append(t)
             self.solutions["A"].append(global_sol[:, 0])
             self.solutions["Q"].append(global_sol[:, 1])
