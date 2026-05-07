@@ -14,19 +14,23 @@ class VascularDataLoader:
 
     def __init__(
         self,
-        mode: Literal["main", "test", "test_single"] = "main",
+        mode: Literal["main", "test", "test_single", "sin", "sin_single"] = "main",
         vessel_data_path: str = "",
         bif_data_path: str = "",
         inflows_dir_path: str = "",
     ):
         
         default_dir = "input_data"
-        if mode not in ["main", "test", "test_single"]:
+        if mode not in ["main", "test", "test_single", "sin", "sin_single"]:
             raise ValueError("Mode must be either 'main' or 'test'.")
         if mode == "test":
             default_dir = os.path.join(default_dir, "test")
         elif mode == "test_single":
             default_dir = os.path.join(default_dir, "test_single")
+        elif mode == "sin":
+            default_dir = os.path.join(default_dir, "sin")
+        elif mode == "sin_single":
+            default_dir = os.path.join(default_dir, "sin_single")
         else:
             default_dir = os.path.join(default_dir, "main")
 

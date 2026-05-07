@@ -4,3 +4,5 @@ __pycache__/
 venv/
 help/
 test/
+.ipynb_checkpoints*
+*.Identifier

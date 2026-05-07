@@ -18,7 +18,7 @@ if __name__ == "__main__":
         elif arg == "--name" and i + 1 < len(sys.argv):
             name = sys.argv[i + 1]
 
-    if mode not in ["main", "test", "test_single"]:
+    if mode not in ["main", "test", "test_single", "sin", "sin_single"]:
         raise ValueError("Mode must be either 'main' or 'test'.")
     if T <= 0:
         raise ValueError("T must be a positive number.")

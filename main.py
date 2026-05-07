@@ -6,7 +6,7 @@ from typing import Literal
 import numpy as np
 
 
-def main(T: float = 1.0, mode: Literal["main", "test", "test_single"] = "main", 
+def main(T: float = 1.0, mode: Literal["main", "test", "test_single", "sin", "sin_single"] = "main", 
          method: Literal["CG", "DG"] = "CG", num_flux: Literal["LxF", "HLL"] = "LxF", name: str | None = None,
          h: float=3 * 0.03125, force_dt: bool=False, dt_forced: float=0.0001):
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         elif arg == "--h" and i + 1 < len(sys.argv):
             h = float(sys.argv[i + 1])
 
-    if mode not in ["main", "test", "test_single"]:
+    if mode not in ["main", "test", "test_single", "sin", "sin_single"]:
         raise ValueError("Mode must be either 'main' or 'test'.")
     if T <= 0:
         raise ValueError("T must be a positive number.")
